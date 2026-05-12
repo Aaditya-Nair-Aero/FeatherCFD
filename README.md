@@ -121,6 +121,13 @@ Cylinder flow
 NACA airfoil sweeps
 Divergence stability checks
 Boundary condition verification
+
+Some utilities currently contain default output paths pointing to:
+
+/home/aaditya/Downloads/tmp
+
+These are primarily convenience defaults for development and can be overridden via CLI arguments or environment variables.
+
 License
 
 MIT License
