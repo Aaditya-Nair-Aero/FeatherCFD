@@ -1,0 +1,98 @@
+GPU CFD Solver
+
+3D incompressible/compressible CFD solver running entirely on GPU using OpenGL shader compute pipelines on a 192³ grid.
+
+Includes:
+
+Real-time volumetric raymarching visualizer
+Dark-themed GUI launcher
+NACA airfoil generation
+CAD mesh import
+Multigrid pressure solving
+Aerodynamic force analysis
+Quick Start
+# Activate environment
+source venv/bin/activate
+
+# Launch GUI
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+python launcher.py
+Launcher Tabs
+1. Object Selection
+
+Choose simulation geometry:
+
+NACA 4-digit airfoils
+NACA 5-digit airfoils
+NACA 6-series airfoils
+Cylinder
+Sphere
+Custom .stl mesh import
+
+Live airfoil preview included.
+
+2. Emitters
+
+Configure dye injection regions.
+
+Includes optional 3D viewport for visual emitter placement.
+
+3. Fluid & Simulation Settings
+Setting	Purpose
+Velocity	Freestream velocity
+Reynolds Number	Automatic viscosity control
+Viscosity	Manual viscosity override
+Steps	Total simulation steps
+Save Every	Frame save interval
+Solver	RBGS or Multigrid V-cycle
+Mode	Incompressible / Compressible
+Mach	Compressible flow Mach number
+Output Directory	Saved simulation frames
+4. Run
+
+The launcher:
+
+Starts the simulation
+Opens the live raymarch visualizer
+Streams simulation frames in real time
+Displays progress/log output
+Visualizer Controls
+Key	Action
+Left Drag	Orbit camera
+Scroll	Zoom
+Space	Pause/Resume
+Arrow Keys	Step frames
+V	Change visualization mode
+ESC	Exit
+CLI Example
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+python simulate_cfd.py \
+  --obstacle wing \
+  --aoa 5 \
+  --wind 2.0 \
+  --steps 500 \
+  --save-every 2 \
+  --no-forces
+
+Launch visualizer:
+
+python visualize_cfd.py
+GPU Requirement
+
+Requires:
+
+NVIDIA GPU recommended
+OpenGL 3.3+ support
+
+The __NV_PRIME_RENDER_OFFLOAD=1 prefix is only needed for hybrid GPU laptops (Optimus systems).
+
+Current Known Issue
+
+The volumetric visualizer currently has a render-space transformation issue causing flow structures to visually drift downward.
+
+The underlying simulation data and numerical results remain correct.
+
+Disclaimer
+Experimental research/learning project — not validated for safety-critical engineering use.

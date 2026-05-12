@@ -1,0 +1,240 @@
+FeatherCFD Solver — Project Overview
+
+Custom 3D incompressible/compressible CFD solver running entirely on GPU via OpenGL compute (fragment) shaders on a 192³ uniform grid. Simulates external aerodynamics over voxelized obstacles (NACA airfoils, cylinders, spheres, CAD meshes) with real-time volumetric raymarching visualization.
+
+---
+
+## Hardware / Runtime
+
+| Item | Detail |
+|------|--------|
+| **GPU** | NVIDIA GeForce RTX 3050 Laptop GPU (4 GB VRAM) |
+| **Grid** | 192 × 192 × 192 = ~7M cells |
+| **Launch prefix** | `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia` |
+| **Data type** | `float16` velocity + density textures (24 MB each); `float32` pressure (28 MB) |
+| **Context** | `moderngl.create_standalone_context()` (headless) or GUI mode with Tkinter |
+
+---
+
+## Project Structure
+
+### Main Files
+
+| File | Purpose |
+|------|---------|
+| **`cfd_sim.py`** (938 lines) | Core incompressible Navier-Stokes solver. `CFD_System` class: textures, FBOs, multigrid (6-level V-cycle), RK4 integrator, FFT/DST Poisson solvers, force+advection+projection pipeline. |
+| **`simulate_cfd.py`** (700 lines) | Main entry point. CLI arg parser, GUI progress window with live slice plot, obstacle setup, step loop, force computation + divergence diagnostics, frame saving. Both incompressible (`_run_incompressible`) and compressible (`_run_compressible`) modes. |
+| **`visualize_cfd.py`** (301 lines) | Standalone raymarching viewer using `moderngl_window`. Playout from saved `.npy` frames. 6 viz modes (velocity, dye, vorticity, near-object, Mach, schlieren). Streaming from NVMe SSD. Live mode polls directory for new frames. |
+| **`geometry_utils.py`** (154 lines) | Voxel obstacle generators: `create_sphere`, `create_box`, `create_cylinder`, `create_naca_airfoil` (NACA 4-digit), and their SDF counterparts. All indexed ij (X,Y,Z). Centering uses `(grid_size-1)/2.0`. |
+| **`euler_solver.py`** (298 lines) | Compressible Euler solver. `EulerSolver` class: SSP-RK3 time integration, 5 conserved variables (ρ, ρu, ρv, ρw, E), adaptive CFL, Sod shock tube IC, dual-color-attachment FBOs. |
+| **`cad_utils.py`** (83 lines) | CAD mesh pipeline via `trimesh`: load, repair, decimate, scale, voxelize at pitch=1.0, compute SDF via distance transform. |
+| **`force_utils.py`** (116 lines) | Post-hoc lift/drag integration: pressure + viscous forces over obstacle surface with mean-pressure removal. |
+
+### Validation & Test Files
+
+| File | Purpose |
+|------|---------|
+| **`validate_cfd.py`** | Smoke test: 5 steps of CFD, checks divergence <0.1, no-slip walls, inflow BC, no NaN explosion |
+| **`validate_compressible.py`** | Compressible sweep: cylinder/sphere/wedge at M=0.5–3.0, 200 steps, Mach convergence |
+| **`validate_sod.py`** | Sod shock tube vs exact Riemann solution, centerline ρ/u/p error, GPU vs analytical comparison plot |
+| **`run_validation.py`** | Orchestrator: runs Sod + compressible obstacles + NACA incompressible, generates TXT/JSON report |
+| **`validate_wedge.py`** | Oblique shock validation |
+| **`validate_naca_sweep.py`** | NACA 0012 at multiple Re/AoA |
+| **`test_naca.py`** / `test_naca_compare.py` / `test_naca_smoke.py` / `test_naca_sgs.py` | Various NACA diagnostics |
+| **`test_dct_obstacle.py`** | Tests DST-based Poisson solve with obstacle |
+| **`test_fft.py`** | Tests FFT Poisson preconditioner |
+| **`test_clamp_modes.py`** | Advection clamping mode tests |
+| **`diag_naca.py`** / `fix_naca.py` | NACA shape diagnostics and fixes |
+| **`detect_collapse.py`** | Detects simulation blowup |
+
+### Other Files
+
+| File | Purpose |
+|------|---------|
+| **`launcher.py`** (872 lines) | Dark-themed Tkinter GUI for setup: NACA coordinate generator (4/5/6-digit), parameter entry, presets, live profile plot, simulation launch |
+| **`launcher_3d_viewport.py`** | 3D viewport in the launcher |
+| **`plot_forces.py`** | Post-hoc drag/lift convergence plot from `forces_history.npy` |
+| **`scratch_moderngl.py`** | Sandbox for OpenGL experiments |
+| **`handof` / `handoff_state.md`** | Development handoff notes |
+
+### Run Output Directories
+
+| Directory | Contents |
+|-----------|----------|
+| `run_aoa0_centered/` | 500-step 0° AoA run (50 frames) |
+| `run_aoa0_long/` | 3000-step 0° AoA run (60 frames) |
+| `sim_data/` | Archived simulation data |
+| `RESTORE_POINT/` | Backup of original key files |
+| `Proof/` | Validation proof artifacts |
+| `DRAFT ONE/`, `DRAFT TWO/` | Earlier development iterations |
+
+---
+
+## Shaders (`shaders/` — 25 files)
+
+### Pipeline Shaders (Incompressible NS)
+
+| Shader | Pass | What it does |
+|--------|------|-------------|
+| **`forces.frag`** | 1/6 | Inflow BC (X=0, Dirichlet), outflow BC (X=191, convective), no-slip Y/Z walls, SDF obstacle masking, optional force-field injection |
+| **`advection.frag`** | 2/6 | Semi-Lagrangian advection with WENO-5 (tensor-product) for interior + trilinear near boundaries, molecular+SGS viscosity via implicit diffusion, velocity clamp modes |
+| **`divergence.frag`** | 3/6 | Forward-difference divergence (finite volume), zero inside obstacles, SDF cut-cell correction |
+| **`jacobi.frag`** | 4/6 | Fine-grid Jacobi iteration for Poisson solve: 7-point Laplacian with Neumann walls, Dirichlet outflow, SDF-embedded boundary |
+| **`rbgs.frag`** | 4/6 | Red-black Gauss-Seidel smoother (same BCs as Jacobi), parity-swapped for parallelism |
+| **`coarse_*.frag`** (5 files) | 4/6 | Multigrid coarse-grid operators: Jacobi, RBGS, residual, add correction — all with obstacle masking |
+| **`restrict.frag`** | 4/6 | Full-weighting restriction (fine → coarse residual) |
+| **`prolongate.frag`** | 4/6 | Trilinear prolongation (coarse → fine correction) |
+| **`fine_residual.frag`** | 4/6 | Compute residual r = div - ∇²p on fine grid |
+| **`add_correction.frag`** | 4/6 | p += ω·correction with SDF-based under-relaxation |
+| **`obstacle_zero.frag`** | 4/6 | Enforce p=0 inside obstacle cells |
+| **`projection.frag`** | 5/6 | u ← u - ∇p (Chorin projection), backward-difference gradient, SDF cut-cell BCs |
+| **`advection_density.frag`** | 6/6 | BFECC dye advection: semi-Lagrangian with WENO-5 for velocity + trilinear for density, injection slab X=40–64, dt_den = dt_fluid × 3.0 |
+| **`copy_tex.frag`** | RK4 | Copy texture (used in RK4 stage save) |
+| **`rk4_setup.frag`** | RK4 | u_stage = u_init + coeff·k_prev |
+| **`rk4_save_k.frag`** | RK4 | k_i = result - u_stage |
+| **`rk4_combine.frag`** | RK4 | u^{n+1} = u^n + (k₁+2k₂+2k₃+k₄)/6 |
+
+### Vertex / Geometry Boilerplate
+
+| Shader | Purpose |
+|--------|---------|
+| **`layered.vert`** | Full-screen triangle (3 vertices), passes `gl_InstanceID` |
+| **`layered.geom`** | Geometry shader: routes each instance to a distinct render layer (`gl_Layer = instance_id`), enabling 3D texture writes via 2D FBO + layered rendering |
+
+### Render Shaders
+
+| Shader | Purpose |
+|--------|---------|
+| **`raymarch.vert`** | Full-screen quad with ray direction per pixel |
+| **`raymarch.frag`** | Volume raymarcher: 6 viz modes (velocity magnitude, dye density, vorticity, near-object, Mach number, schlieren), NASA rainbow colormap, obstacle overdrawn in gray, early ray termination |
+
+### Euler / Compressible
+
+| Shader | Purpose |
+|--------|---------|
+| **`euler_update.frag`** | SSP-RK3 stage: MUSCL reconstruction + HLL flux + RK stage combo + obstacle wall BCs |
+
+---
+
+## Python Dependencies
+
+| Package | Use |
+|---------|-----|
+| `moderngl` | OpenGL 3.3 core context, textures, FBOs, shader programs |
+| `PyOpenGL` | Low-level GL calls (`glBindFramebuffer`, `glFramebufferTexture`, etc.) |
+| `numpy` | All CPU-side data: masks, SDFs, frame I/O, force post-processing |
+| `scipy` | `distance_transform_edt` (SDF from mask), `fft.dst`/`idst` (DCT Poisson solver) |
+| `trimesh` | CAD mesh loading, repair, decimation, voxelization |
+| `glfw` / `moderngl_window` | Standalone window for visualizer (`visualize_cfd.py`) |
+| `matplotlib` | GUI progress window live slice plot, validation plots |
+| `Pillow` | Matplotlib Tk backend (image compositing) |
+| `Mako` | (optional) templating |
+| `tkinter` | GUI progress window + launcher |
+
+---
+
+## GPU Compute Pipeline (Incompressible, per step)
+
+```
+Velocity_A ──► forces.frag ──► Velocity_B     [Add external forces + BCs]
+Velocity_B ──► advection.frag ──► Velocity_A  [Semi-Lagrangian WENO-5 advection]
+Velocity_A ──► divergence.frag ──► Divergence  [Compute ∇·u]
+Divergence ──► _mg_solve() ──► Pressure       [Solve ∇²p = ∇·u via multigrid/DST/FFT]
+Velocity_A + Pressure ──► projection.frag ──► Velocity_B  [u ← u - ∇p]
+Velocity_B + Density_A ──► advection_density.frag ──► Density_B  [BFECC dye advection]
+Swap: Velocity_B→A, Density_B→A  [ping-pong]
+```
+
+Pressure solvers (selectable):
+- **`jacobi`** (default): 40–120 iterations of fine-grid Jacobi
+- **`vcycle`**: 6-level multigrid V-cycle with RBGS smoothers
+- **`fft`**: FFT-based (periodic) preconditioner + iterative BC correction loop
+- **`dct`**: DST-II exact solve (Dirichlet p=0 at all faces) + RBGS post-smoothing
+
+---
+
+## Coordinate Conventions
+
+| Context | Layout | Meaning |
+|---------|--------|---------|
+| **CPU (numpy)** | `[X, Y, Z]` | X=streamwise (flow), Y=spanwise (vertical), Z=cross-stream (lateral) |
+| **GPU (texture)** | `[Z, Y, X]` | OpenGL texture (Z slowest, X fastest) |
+| **Disk (`.npy`)** | `[Z, Y, X, 4]` | Raw GPU readback. Channels: 0=X-vel, 1=Y-vel, 2=Z-vel, 3=density/Mach |
+| **Transpose** | `np.transpose(data, (2,1,0,...))` | Converts between CPU↔GPU layouts |
+
+All obstacles are Z-centered at `(grid_size-1)/2.0 = 95.5` (corrected from `grid_size/2 = 96.0` which caused 5890 asymmetric cylinder cells).
+
+---
+
+## Obstacle Types
+
+| Type | Generator | Parameters |
+|------|-----------|------------|
+| **Sphere** | `create_sphere(grid, center, radius)` | R=25, centered at (95.5, 95.5, 95.5) |
+| **Cylinder** | `create_cylinder(grid, cx, cz, radius, y_start, y_end)` | R=15 (D=30), full Y span, Z-centered |
+| **Wing (NACA)** | `create_naca_airfoil(grid, chord_start, chord_len, t, span_start, span_end, aoa_deg)` | NACA 00xx (default 0015/0012), chord=60, span full Y, AoA adjustable via `--aoa` |
+| **CAD mesh** | `set_cad_obstacle(mesh_path, chord, aoa)` | Any trimesh-loadable format (STL, OBJ, etc.), auto-scaled to specified chord |
+
+---
+
+## Solver Parameters / CLI
+
+```bash
+python simulate_cfd.py [options]
+
+Options:
+  --steps N            Total simulation steps (default: 300)
+  --save-every N       Frame save interval (default: 10)
+  --out-dir PATH       Output directory (default: ~/Downloads/tmp)
+  --obstacle {sphere,cylinder,wing,none}
+  --wind U_INF         Freestream velocity (default: 2.0)
+  --no-forces          Disable artistic swirling force injection
+  --aoa DEG            Wing angle of attack (default: 5.0)
+  --re RE              Reynolds number (sets viscosity)
+  --viscosity NU       Direct viscosity override
+  --vcycle             Use multigrid V-cycle pressure solver
+  --mach MACH          Mach number (compressible mode)
+  --mode {incompressible,compressible}
+  --sod                Sod shock tube IC (compressible)
+  --cad PATH           CAD mesh file path
+  --cad-chord L        Scale CAD to chord length L
+  --cad-aoa DEG        Rotate CAD to AoA
+  --headless           No GUI progress window
+  --rk4                Use RK4 time integration (instead of default Euler)
+```
+
+---
+
+## Frame Data Format
+
+Saved `.npy` files (one per saved step) are `[Z, Y, X, 4]` float16 arrays:
+
+| Channel | Incompressible | Compressible |
+|---------|---------------|--------------|
+| 0 | X-velocity (u) | X-velocity (u) |
+| 1 | Y-velocity (v) | Y-velocity (v) |
+| 2 | Z-velocity (w) | Z-velocity (w) |
+| 3 | Dye density ρ | Mach number |
+
+Injection slab: X=40–64, Y=50–140, Z=20–170 (upstream of NACA LE at X≈95.5).
+
+---
+
+## Key Design Decisions
+
+- **Fragment shader compute**: 3D simulation via `gl_Layer` in geometry shader (each layer = one Z-slice of the grid). Full-screen triangle draws pixel ↔ (Y, X) per layer. 192 instances = 192 Z slices.
+- **SDF-embedded boundaries**: Obstacles use `smoothstep(-0.5, 0.5, sdf)` for sub-grid alpha blending. Pressure solve uses Neumann BC at obstacle surface via SDF neighbor checks.
+- **Multigrid**: 6 levels (192→96→48→24→12→6→3). Jacobi/RBGS smoothers. Trilinear prolongation. Coarse obstacles pre-computed via `any()` downsampling.
+- **WENO-5 advection**: Tensor-product 5th-order WENO for interior cells, trilinear fallback near boundaries. Reduces numerical diffusion vs simple linear interpolation.
+- **Dye advection (BFECC)**: Back-and-forth error compensation and correction. `dt_den = dt_fluid × 3.0` (aggressive — user preference to spread dye further).
+- **Validation**: Sod shock tube <12% normalized error; compressible obstacles produce bow shocks with Mach > inflow M; incompressible NACA produces lift (Cl ~0.5 at 5°) with drag.
+
+---
+
+## Recent Fixes
+
+| Fix | What changed | Impact |
+|-----|-------------|--------|
+| **Z-centering** | `grid/2 → (grid-1)/2` in all obstacle calls (5 sites in `simulate_cfd.py`, 2 in `geometry_utils.py`, 1 in `cad_utils.py`) | Cylinder asymmetry: **5890 → 0** cells; wing at 0° AoA: **0 asymmetric cells** |
+| **AoA flag** | Added `--aoa` argument (default 5.0) to `simulate_cfd.py`, replaced hardcoded 5° in `_run_incompressible` | Wing AoA adjustable from CLI |
+| **`--no-forces`** | Path calls `cfd.step(force_radius=0.0)` skipping artistic forces | Clean aerodynamic runs without swirling vortex injection |
