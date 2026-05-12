@@ -128,6 +128,13 @@ Some utilities currently contain default output paths pointing to:
 
 These are primarily convenience defaults for development and can be overridden via CLI arguments or environment variables.
 
+<img width="1920" height="1034" alt="Screenshot from 2026-05-12 11-31-38" src="https://github.com/user-attachments/assets/28597f62-dd6f-4eda-8f7d-36ac8c0c1e69" />
+<img width="1920" height="1036" alt="Screenshot from 2026-05-12 11-30-02" src="https://github.com/user-attachments/assets/ffd5590a-1242-4315-8f02-06130c81645a" />
+<img width="1920" height="1034" alt="Screenshot from 2026-05-12 11-28-31" src="https://github.com/user-attachments/assets/84f5d354-f4db-430a-92cc-79600a801184" />
+<img width="1920" height="1034" alt="Screenshot from 2026-05-12 11-27-33" src="https://github.com/user-attachments/assets/d99d2fe6-798b-45c8-ae41-49a614d7be0a" />
+<img width="1911" height="1032" alt="Screenshot from 2026-05-12 11-25-18" src="https://github.com/user-attachments/assets/b3ebaa00-51e9-4146-8322-e8bfa95e9c26" />
+
+
 License
 
 MIT License
