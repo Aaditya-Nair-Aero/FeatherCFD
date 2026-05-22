@@ -23,6 +23,7 @@ def oblique_shock_theory(M, theta_deg, gamma=1.4):
     if theta_deg >= 90:
         return 0.0
 
+    # Find the maximum deflection angle θ_max by golden-section search
     phi = (math.sqrt(5) - 1) / 2
     a, b = mu + 0.001, math.pi / 2 - 0.001
     for _ in range(30):
@@ -38,6 +39,7 @@ def oblique_shock_theory(M, theta_deg, gamma=1.4):
     if theta > theta_max:
         return 0.0
 
+    # Bisection between mu and beta_max for the weak shock
     lo, hi = mu + 0.001, beta_max
     for _ in range(50):
         mid = (lo + hi) / 2
@@ -96,6 +98,7 @@ def run_wedge_validation(Mach, theta_deg=10, steps=1000):
         if search_start >= grid - 3:
             continue
         z_line = grad_z[:, x]
+        # Look for sharpest gradient in a wider window
         shock_z = np.argmax(z_line[search_start:]) + search_start
         if ramp_top + 2 < shock_z < grid - 2:
             points_shock.append((x, shock_z))

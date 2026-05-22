@@ -62,6 +62,7 @@ class CFDVisualizer(mglw.WindowConfig):
                 import time
                 time.sleep(0.5)
                 self.frame_files = sorted(glob.glob(os.path.join(data_dir, 'vel_*.npy')))
+                # Also check for obstacles while waiting
                 if os.path.exists(os.path.join(data_dir, 'obstacles.npy')):
                     print("  Obstacles found, waiting for first velocity frame...")
             print(f"  Found first frame. Streaming live from {data_dir}")
@@ -100,6 +101,7 @@ class CFDVisualizer(mglw.WindowConfig):
             self.tex_sdf = self.ctx.texture3d((self.grid_size, self.grid_size, self.grid_size), 1, dtype='f2')
             self.tex_sdf.write(np.zeros((self.grid_size, self.grid_size, self.grid_size), dtype='f2').tobytes())
 
+        # Single GPU texture — updated each frame from RAM via PCIe (~3ms)
         self.tex_volume = self.ctx.texture3d(
             (self.grid_size, self.grid_size, self.grid_size),
             4, dtype='f2'
@@ -231,6 +233,7 @@ class CFDVisualizer(mglw.WindowConfig):
             self._upload_frame(self.current_frame)
 
     def on_render(self, time_val, frame_time):
+        # Live mode: check for new frames and show latest
         if self.live:
             new_files = sorted(glob.glob(os.path.join(self.data_dir, 'vel_*.npy')))
             if not new_files:

@@ -6,6 +6,7 @@ Runs GPU Euler solver, extracts centerline, computes exact Riemann solution, plo
 import moderngl, numpy as np, time, os, sys, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# ── Exact Riemann solver for Sod problem ─────────────────────────────────
 def sod_exact(x, x0, t, gamma=1.4):
     """Exact solution of Sod shock tube at position x and time t.
     
@@ -19,18 +20,22 @@ def sod_exact(x, x0, t, gamma=1.4):
     cL = np.sqrt(gamma * pL / rhoL)
     cR = np.sqrt(gamma * pR / rhoR)
     
+    # Solve for star region pressure p3 (iterative)
     p3_guess = 0.5 * (pL + pR)
     for _ in range(50):
+        # Left side (rarefaction)
         if p3_guess <= pL:
             A = 2.0 / ((gamma + 1.0) * rhoL)
             B = (gamma - 1.0) / (gamma + 1.0) * pL
             fL = np.sqrt(A / (p3_guess + B)) if p3_guess + B > 0 else 0.0
             fL *= (p3_guess - pL)
         else:
+            # Left shock (shouldn't happen for Sod)
             A = 2.0 / ((gamma + 1.0) * rhoL)
             B = (gamma - 1.0) / (gamma + 1.0) * pL
             fL = np.sqrt(A / (pL + B)) * (p3_guess - pL) / np.sqrt(p3_guess / pL + B)
         
+        # Right side (shock)
         A = 2.0 / ((gamma + 1.0) * rhoR)
         B = (gamma - 1.0) / (gamma + 1.0) * pR
         denom = p3_guess + B
@@ -46,25 +51,32 @@ def sod_exact(x, x0, t, gamma=1.4):
     
     p3 = p3_guess
     
+    # Velocity in star region
     A = 2.0 / ((gamma + 1.0) * rhoR)
     B = (gamma - 1.0) / (gamma + 1.0) * pR
     u3 = uR + np.sqrt(A / (p3 + B)) * (p3 - pR)
     
+    # Density left of contact
     if p3 > pL:
         rho3L = rhoL * (p3/pL + (gamma-1)/(gamma+1)) / ((gamma-1)/(gamma+1) * p3/pL + 1)
     else:
         rho3L = rhoL * (p3/pL) ** (1.0/gamma)
     
+    # Density right of contact (shock)
     rho3R = rhoR * (p3/pR + (gamma-1)/(gamma+1)) / ((gamma-1)/(gamma+1) * p3/pR + 1)
     
+    # Wave speeds
     c3L = np.sqrt(gamma * p3 / rho3L)
     c3R = np.sqrt(gamma * p3 / rho3R)
     
+    # Rarefaction head/tail speeds
     S_HL = uL - cL  # head of rarefaction
     S_TL = u3 - c3L  # tail of rarefaction
     
+    # Shock speed
     vs = uR + cR * np.sqrt((gamma + 1) * p3 / (2 * gamma * pR) + (gamma - 1) / (2 * gamma))
     
+    # Contact speed
     vc = u3
     
     out_rho = np.zeros_like(x, dtype=np.float64)
@@ -75,24 +87,29 @@ def sod_exact(x, x0, t, gamma=1.4):
     
     for i, xi_i in enumerate(xi):
         if xi_i <= S_HL:
+            # Left undisturbed
             out_rho[i] = rhoL
             out_u[i] = uL
             out_p[i] = pL
         elif xi_i <= S_TL:
+            # Rarefaction fan
             u_fan = 2.0/(gamma+1) * (cL + (gamma-1)/2 * uL + xi_i)
             c_fan = u_fan - xi_i
             out_u[i] = u_fan
             out_rho[i] = rhoL * (c_fan/cL) ** (2.0/(gamma-1))
             out_p[i] = pL * (c_fan/cL) ** (2.0*gamma/(gamma-1))
         elif xi_i <= vc:
+            # Left of contact (star region)
             out_rho[i] = rho3L
             out_u[i] = u3
             out_p[i] = p3
         elif xi_i <= vs:
+            # Right of contact (star region)
             out_rho[i] = rho3R
             out_u[i] = u3
             out_p[i] = p3
         else:
+            # Right undisturbed
             out_rho[i] = rhoR
             out_u[i] = uR
             out_p[i] = pR
@@ -100,6 +117,7 @@ def sod_exact(x, x0, t, gamma=1.4):
     return out_rho, out_u, out_p
 
 
+# ── GPU Simulation ───────────────────────────────────────────────────────
 def run_sod_simulation(steps=200, out_dir=None):
     ctx = moderngl.create_standalone_context()
     import OpenGL.GL as gl; gl.glGetString(gl.GL_VERSION)
@@ -132,6 +150,7 @@ def run_sod_simulation(steps=200, out_dir=None):
     }
 
 
+# ── Plotting ─────────────────────────────────────────────────────────────
 def plot_sod_comparison(sol, x0=96, out_path=None):
     import matplotlib
     matplotlib.use('Agg')
@@ -148,6 +167,7 @@ def plot_sod_comparison(sol, x0=96, out_path=None):
     x_grid = np.arange(N, dtype=np.float64)
     rho_exact, u_exact, p_exact = sod_exact(x_grid, x0, t_sim)
     
+    # Compute errors
     rho_err = np.mean(np.abs(rho_num - rho_exact)) / np.mean(rho_exact)
     u_err = np.mean(np.abs(u_num - u_exact)) / (np.max(u_exact) - np.min(u_exact))
     p_err = np.mean(np.abs(p_num - p_exact)) / np.mean(p_exact)
@@ -185,6 +205,7 @@ def plot_sod_comparison(sol, x0=96, out_path=None):
     return {'rho_err': rho_err, 'u_err': u_err, 'p_err': p_err}
 
 
+# ── Main ─────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description='Sod shock tube validation')
     parser.add_argument('--steps', type=int, default=200, help='Simulation steps')
@@ -200,10 +221,12 @@ def main():
     print(f"  Steps: {sol['steps']}, dt={sol['dt']:.6f}, t_sim={sol['t_sim']:.2f}")
     print(f"  GPU time: {sol['elapsed']:.1f}s")
     
+    # Save numerical data
     np.savez(os.path.join(args.out_dir, 'sod_numerical.npz'),
              rho=sol['rho'], u=sol['u'], p=sol['p'],
              steps=sol['steps'], dt=sol['dt'], t_sim=sol['t_sim'])
     
+    # Plot
     plot_path = os.path.join(args.out_dir, 'sod_validation.png')
     errs = plot_sod_comparison(sol, x0=args.x0, out_path=plot_path)
     

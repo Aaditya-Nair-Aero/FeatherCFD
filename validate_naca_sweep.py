@@ -50,6 +50,7 @@ def run_naca_case(ctx, U_inf, chord, Re, aoa, steps, sample_interval=5):
             force_hist[si] = ft
             si += 1
     
+    # Average over last 40% of samples
     n_avg = max(1, n_samples * 40 // 100)
     mean_f = np.mean(force_hist[-n_avg:], axis=0)
     
@@ -97,10 +98,12 @@ def main():
             print(f"  Cl={Cl:.4f}  Cd={Cd:.4f}  L/D={Cl/Cd:.2f}  ({elapsed:.0f}s)")
             all_results[Re].append((aoa, Cl, Cd))
             
+            # Save individual case data
             np.savez(os.path.join(args.out_dir, f'naca_Re{Re}_aoa{aoa}.npz'),
                      forces=force_hist, Cl=Cl, Cd=Cd, Re=Re, aoa=aoa,
                      U_inf=U_inf, chord=chord)
     
+    # Print summary
     print(f"\n{'='*60}")
     print(f"NACA 0012 Sweep Summary")
     print(f"{'='*60}")
@@ -112,6 +115,7 @@ def main():
             ld = Cl / Cd if Cd > 1e-10 else 0.0
             print(f"{Re:5d} {aoa:4d} {Cl:8.4f} {Cd:8.4f} {ld:8.2f}")
     
+    # Save summary
     summary = {'Re_list': Re_list, 'AoA_list': AoA_list,
                'results': {str(Re): all_results[Re] for Re in Re_list}}
     np.save(os.path.join(args.out_dir, 'naca_sweep_summary.npy'), summary)

@@ -61,6 +61,7 @@ def run_test(cfg):
     print(f"  [{name}] Done: 200 steps in {elapsed:.1f}s ({elapsed/200:.3f}s/step)")
     return elapsed
 
+# Run comparison
 tests = [
     {'name': 'V-cycle', 'use_vcycle': True, 'vcycle_interval': 1},
     {'name': 'RBGS_120', 'use_vcycle': False, 'jacobi_iters': 120},

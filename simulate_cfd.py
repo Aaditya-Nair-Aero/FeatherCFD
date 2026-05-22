@@ -28,6 +28,7 @@ def generate_forces(step, grid_size):
 
     forces = []
 
+    # Force 1: Orbiting vortex ring
     orbit_r = g * 0.25
     ox = c + orbit_r * math.cos(t)
     oy = c + 10.0 * math.sin(t * 1.7)
@@ -37,6 +38,7 @@ def generate_forces(step, grid_size):
     dz = math.cos(t) * 0.8
     forces.append(((ox, oy, oz), (dx, dy, dz), 20.0))
 
+    # Force 2: Counter-rotating vortex
     ox2 = c - orbit_r * math.cos(t * 0.8 + 1.0)
     oy2 = c - 15.0 * math.sin(t * 1.3)
     oz2 = c - orbit_r * math.sin(t * 0.8 + 1.0)
@@ -45,9 +47,11 @@ def generate_forces(step, grid_size):
     dz2 = -math.cos(t * 0.8 + 1.0) * 0.7
     forces.append(((ox2, oy2, oz2), (dx2, dy2, dz2), 18.0))
 
+    # Force 3: Central upwelling pulse
     pulse = 0.6 + 0.4 * math.sin(t * 2.0)
     forces.append(((c, c * 0.4, c), (0.0, pulse, 0.0), 25.0))
 
+    # Force 4: Diagonal shear (ramps in after step 40)
     if step > 40:
         shear = min(1.0, (step - 40) / 30.0)
         sx = c + 30.0 * math.sin(t * 0.3)
@@ -75,8 +79,10 @@ def compute_lift_drag(pressure, mask, velocity=None, viscosity=0.0, inflow_vel=(
     force_v = np.zeros(3)
     fluid_mask = (mask == 0)
 
+    # Collect all surface face pressures for mean removal
     all_surface_pressures = []
 
+    # Probes for each axis: dim0=Z, dim1=Y, dim2=X
     dim_pairs = [
         (2, 1, 0),  # X: dim2
         (1, 1, 1),  # Y: dim1
@@ -99,6 +105,7 @@ def compute_lift_drag(pressure, mask, velocity=None, viscosity=0.0, inflow_vel=(
         obst_sl_p  = tuple(shift_p)
         obst_sl_m  = tuple(shift_m)
         
+        # Collect surface pressures for mean computation
         is_sp_raw = fluid_mask[obst_sl_m] & (mask[obst_sl_p] == 1)
         is_sm_raw = fluid_mask[obst_sl_p] & (mask[obst_sl_m] == 1)
         if is_sp_raw.any():
@@ -106,6 +113,7 @@ def compute_lift_drag(pressure, mask, velocity=None, viscosity=0.0, inflow_vel=(
         if is_sm_raw.any():
             all_surface_pressures.extend(pressure[obst_sl_p][is_sm_raw].tolist())
 
+    # Remove mean pressure to eliminate DC offset from non-converged solver
     p_mean = np.mean(all_surface_pressures) if all_surface_pressures else 0.0
 
     for f_idx, (dim, pm_scale, _) in enumerate(dim_pairs):
@@ -124,16 +132,19 @@ def compute_lift_drag(pressure, mask, velocity=None, viscosity=0.0, inflow_vel=(
         obst_sl_p  = tuple(shift_p)
         obst_sl_m  = tuple(shift_m)
         
+        # Plus direction: fluid at lower index, obstacle at higher index
         is_sp = fluid_mask[obst_sl_m] & (mask[obst_sl_p] == 1)
         if is_sp.any():
             press_contrib = np.sum(pressure[obst_sl_m][is_sp] - p_mean)
             force_p[f_idx] += press_contrib
             
+        # Minus direction: fluid at higher index, obstacle at lower index
         is_sm = fluid_mask[obst_sl_p] & (mask[obst_sl_m] == 1)
         if is_sm.any():
             press_contrib = np.sum(pressure[obst_sl_p][is_sm] - p_mean)
             force_p[f_idx] -= press_contrib
 
+    # Viscous contribution
     if velocity is not None and viscosity > 0.0:
         vel = velocity
         nu = viscosity
@@ -210,6 +221,7 @@ class ProgressWindow:
                                   bg="#1a1a2e")
         self.gpu_label.pack()
 
+        # Progress bar
         style = ttk.Style()
         style.theme_use('clam')
         style.configure("custom.Horizontal.TProgressbar",
@@ -246,6 +258,7 @@ class ProgressWindow:
         self.ax.set_xlabel("X (flow  →)", color="#7f8fa6", fontsize=8)
         self.ax.set_ylabel("Z", color="#7f8fa6", fontsize=8)
         self.ax.tick_params(colors="#7f8fa6", labelsize=7)
+        # Placeholder until first update
         placeholder = np.zeros((192, 192))
         self.img = self.ax.imshow(placeholder, origin="lower", cmap="RdBu_r",
                                   aspect="auto", extent=[0, 192, 0, 192],
@@ -365,6 +378,8 @@ def main():
                         help='Disable GUI progress window (for non-interactive runs)')
     parser.add_argument('--out-dir', type=str, default='/home/aaditya/Downloads/tmp',
                         help='Output directory for frames (NVME SSD recommended)')
+    parser.add_argument('--engine', type=str, choices=['opengl', 'vulkan'], default='opengl',
+                        help='Rendering engine: opengl (current) or vulkan (in development)')
     args = parser.parse_args()
 
     out_dir = args.out_dir
@@ -373,6 +388,10 @@ def main():
     for f in os.listdir(out_dir):
         if f.startswith('vel_') and f.endswith('.npy'):
             os.remove(os.path.join(out_dir, f))
+
+    if args.engine == 'vulkan':
+        _run_vulkan_incompressible(args)
+        return
 
     win = None
     if not args.headless:
@@ -394,6 +413,122 @@ def main():
         _run_compressible(ctx, args, win)
     else:
         _run_incompressible(ctx, args, win)
+
+
+def _run_vulkan_incompressible(args):
+    from vk_cfd.common.device import VKContext
+    from vk_cfd.sim.cfd_sim_vk import CFD_System_VK
+    from geometry_utils import create_sphere, create_naca_airfoil, create_naca_airfoil_sdf, create_cylinder, create_cylinder_sdf
+    from force_utils import compute_lift_drag
+
+    grid = 192
+    print("Creating Vulkan context...")
+    vk_ctx = VKContext()
+    cfd = CFD_System_VK(vk_ctx)
+    cfd.inflow_vel = (args.wind, 0.0, 0.0)
+
+    char_len = args.cad_chord if args.cad else args.chord
+    if args.re is not None:
+        cfd.set_reynolds(args.re, char_length=char_len)
+    elif args.viscosity is not None:
+        cfd.viscosity = args.viscosity
+        print(f"  viscosity set to {cfd.viscosity:.6e}")
+
+    print(f"Vulkan CFD System initialized. Grid: {grid}^3 | Wind: {args.wind}")
+
+    mask = None
+    if args.obstacle == 'sphere':
+        ctr = (grid - 1) / 2.0
+        mask = create_sphere(grid, (ctr, ctr, ctr), 25.0)
+        x, y, z = np.meshgrid(np.linspace(0, grid-1, grid),
+                               np.linspace(0, grid-1, grid),
+                               np.linspace(0, grid-1, grid), indexing='ij')
+        sdf = np.sqrt((x-ctr)**2 + (y-ctr)**2 + (z-ctr)**2) - 25.0
+        cfd.set_obstacle(mask, sdf.astype(np.float16))
+    elif args.obstacle == 'wing':
+        ctr = (grid - 1) * 0.5
+        mask = create_naca_airfoil(grid, ctr, 60.0, 0.15, 0, grid, aoa_deg=args.aoa)
+        sdf = create_naca_airfoil_sdf(grid, ctr, 60.0, 0.15, 0, grid, aoa_deg=args.aoa)
+        cfd.set_obstacle(mask, sdf.astype(np.float16))
+    elif args.obstacle == 'cylinder':
+        ctr = (grid - 1) / 2.0
+        mask = create_cylinder(grid, ctr, ctr, 15.0, 1, grid-1)
+        sdf = create_cylinder_sdf(grid, ctr, ctr, 15.0, 1, grid-1)
+        cfd.set_obstacle(mask, sdf.astype(np.float16))
+
+    if args.wind != 0.0:
+        vel_init = np.full((grid, grid, grid, 4), 0, dtype=np.float16)
+        vel_init[..., 0] = args.wind
+        if args.obstacle != 'none' and mask is not None:
+            mask_exp = np.repeat(mask[..., np.newaxis], 4, axis=3)
+            vel_init = np.where(mask_exp > 0, 0, vel_init)
+        cfd.tex_velocity_A.upload(vel_init)
+        cfd.tex_velocity_B.upload(vel_init)
+        print(f"  Velocity initialized to ({args.wind}, 0, 0) everywhere")
+
+    print(f"Simulating {args.steps} steps...")
+    saved = 0
+    t_start = time.perf_counter()
+    out_dir = args.out_dir
+    os.makedirs(out_dir, exist_ok=True)
+
+    obs_mask = None
+    if args.obstacle != 'none':
+        obs_mask = mask
+
+    forces_history = []
+
+    for step in range(1, args.steps + 1):
+        cfd.step()
+
+        current_force = None
+        if obs_mask is not None:
+            pressure = cfd.read_pressure()
+            vel_array = cfd.read_velocity()
+            current_force, force_p, force_v = compute_lift_drag(
+                pressure, obs_mask,
+                velocity=vel_array[:, :, :, :3],
+                viscosity=cfd.viscosity)
+            forces_history.append(current_force)
+            v = vel_array[:, :, :, :3].astype(np.float64)
+            div = (v[2:, 1:-1, 1:-1, 0] - v[1:-1, 1:-1, 1:-1, 0]) + \
+                  (v[1:-1, 2:, 1:-1, 1] - v[1:-1, 1:-1, 1:-1, 1]) + \
+                  (v[1:-1, 1:-1, 2:, 2] - v[1:-1, 1:-1, 1:-1, 2])
+            mean_div = np.mean(np.abs(div))
+            max_div = np.max(np.abs(div))
+            if step <= 5 or step % 50 == 0:
+                print(f"  step={step:4d}  total=({current_force[0]:+9.1f}, {current_force[2]:+9.1f})  "
+                      f"|div|_mean={mean_div:.6f}  max={max_div:.4f}")
+
+        if step % args.save_every == 0:
+            vel = cfd.read_velocity()
+            den = cfd.read_density()
+            rgba = np.zeros((grid, grid, grid, 4), dtype=np.float16)
+            rgba[:, :, :, :3] = vel[:, :, :, :3]
+            rgba[:, :, :, 3] = den if den.ndim == 3 else den[:, :, :, 0]
+            fname = os.path.join(out_dir, f'vel_{saved:04d}.npy')
+            np.save(fname, rgba)
+            saved += 1
+
+        elapsed = time.perf_counter() - t_start
+        if step % 10 == 0:
+            print(f"  step={step:4d}/{args.steps}  elapsed={elapsed:.1f}s  frames={saved}")
+
+    elapsed = time.perf_counter() - t_start
+    print(f"\nDone! {saved} frames in {elapsed:.1f}s")
+    if forces_history:
+        np.save(os.path.join(out_dir, 'forces_history.npy'), np.array(forces_history))
+    meta = {
+        'grid_size': grid, 'total_frames': saved,
+        'steps_per_frame': args.save_every,
+        'total_sim_steps': args.steps, 'dt': cfd.dt, 'mode': 'incompressible',
+        'engine': 'vulkan',
+    }
+    np.save(os.path.join(out_dir, 'metadata.npy'), meta)
+    if obs_mask is not None:
+        np.save(os.path.join(out_dir, 'obstacles.npy'), obs_mask)
+    cfd.destroy()
+    vk_ctx.destroy()
 
 
 def _run_incompressible(ctx, args, win):
@@ -528,6 +663,7 @@ def _run_incompressible(ctx, args, win):
 
         if win is not None and obs_mask is not None and (step <= 5 or step % 2 == 0):
             mid_y = grid // 2
+            # Show velocity perturbation: u - U_inf (reveals flow features immediately)
             u_pert = vel_array[:, mid_y, :, 0].T - args.wind
             print(f"  [slice] step={step} u_pert=[{u_pert.min():.3f},{u_pert.max():.3f}]")
             win.update_slice(u_pert)

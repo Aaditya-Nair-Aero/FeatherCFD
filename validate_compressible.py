@@ -30,6 +30,7 @@ def run_compressible_case(ctx, obstacle_type, Mach, steps=200, out_dir=None):
         mask = create_sphere(grid, (grid/2, grid/2, grid/2), 25.0)
         euler.set_obstacle(mask)
     elif obstacle_type == 'wedge':
+        # Simple wedge: ramp in upper half
         print(f"  Creating wedge (15° ramp)...")
         mask = np.zeros((grid, grid, grid), dtype='u1')
         for x in range(grid):
@@ -38,6 +39,7 @@ def run_compressible_case(ctx, obstacle_type, Mach, steps=200, out_dir=None):
                 mask[ramp_y:grid//2, :, x] = 1
         euler.set_obstacle(mask)
     
+    # Stats history
     mach_max_hist = []
     dt_hist = []
     t0 = time.perf_counter()
@@ -125,6 +127,7 @@ def main():
             print(f"  ρ range: [{result['rho_min']:.4f}, {result['rho_max']:.4f}]  ({elapsed:.0f}s)")
             all_results.append(result)
     
+    # Summary
     print(f"\n{'='*60}")
     print(f"Compressible Euler Summary")
     print(f"{'='*60}")

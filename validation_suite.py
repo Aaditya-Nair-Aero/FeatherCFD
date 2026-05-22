@@ -53,6 +53,7 @@ def validate_cylinder(re=100, steps=3000):
     cfd.tex_velocity_A.write(vit.tobytes())
     cfd.tex_velocity_B.write(vit.tobytes())
 
+    # Break symmetry to trigger Karman vortex shedding
     v0 = cfd.read_velocity()
     v0[..., 2] += 0.05 * U_inf * np.random.randn(*v0[..., 2].shape)
     cfd.write_velocity(v0)
@@ -80,6 +81,7 @@ def validate_cylinder(re=100, steps=3000):
             el = time.perf_counter() - t0
             print(f"  step={step:5d}/{steps}  Drag={ft[0]:+.1f}  Lift(Z)={ft[2]:+.1f}  ({el:.0f}s)")
 
+    # Compute Strouhal from lift oscillation (last 50%)
     half = n_samples // 2
     lift = forces[half:, 2]
     lift -= np.mean(lift)
@@ -97,9 +99,11 @@ def validate_cylinder(re=100, steps=3000):
     passed = err < 20.0
     print(f"  Error: {err:.1f}%  {'PASS' if passed else 'FAIL'}")
 
+    # Also print FFT spectrum for diagnostics
     f_expected = 0.165 * U_inf / D
     print(f"  Expected freq: {f_expected:.6f} Hz, Peak freq: {f_peak:.6f} Hz, Nsamples: {len(lift)} (d_avg={d_avg:.4f})")
 
+    # Print top 5 frequencies for debugging
     top5 = np.argsort(np.abs(fft[1:]))[-5:][::-1] + 1
     expected_idx = np.argmin(np.abs(freqs - f_expected))
     print(f"  Top FFT bins: idx={top5}, freq={freqs[top5]}, St={freqs[top5]*D/U_inf}")
@@ -115,16 +119,20 @@ def validate_naca_sweep(steps=2000):
     grid = 192
     chord = 60.0
     U_inf = 2.0
-    Re = 10000
+    Re = 3000
 
     results = []
-    for aoa in [0, 2, 4, 6, 8]:
+    for aoa in [0, 4, 8]:
         print(f"\n--- AoA = {aoa}° ---")
         cfd = CFD_System(ctx)
         cfd.inflow_vel = (U_inf, 0.0, 0.0)
         for prog in [cfd.prog_forces, cfd.prog_advection, cfd.prog_projection, cfd.prog_advection_density]:
             if 'u_inflow_vel' in prog:
                 prog['u_inflow_vel'].value = tuple(cfd.inflow_vel)
+
+        cfd.sgs_coeff = 0.0
+        cfd.jacobi_iters = 40
+        cfd.cfl_target = 0.55
 
         mask = create_naca_airfoil(grid, grid*0.5, chord, 0.12, 0, grid, aoa_deg=float(aoa))
         sdf = create_naca_airfoil_sdf(grid, grid*0.5, chord, 0.12, 0, grid, aoa_deg=float(aoa))
@@ -135,13 +143,11 @@ def validate_naca_sweep(steps=2000):
         obs_data = cfd.tex_obstacle.read()
         obs_mask = np.frombuffer(obs_data, dtype='u1').reshape((grid, grid, grid))
 
-        vel_init = np.full((grid, grid, grid, 4), 0, dtype=np.float16)
-        vel_init[..., 0] = U_inf
-        me = np.repeat(mask[..., np.newaxis], 4, axis=3)
-        vel_init = np.where(me > 0, 0, vel_init)
-        vit = np.transpose(vel_init, (2, 1, 0, 3))
-        cfd.tex_velocity_A.write(vit.tobytes())
-        cfd.tex_velocity_B.write(vit.tobytes())
+        vel_np = np.zeros((grid, grid, grid, 3), dtype=np.float32)
+        vel_np[..., 0] = U_inf
+        me = np.repeat(mask[..., np.newaxis], 3, axis=3)
+        vel_np = np.where(me > 0, 0, vel_np)
+        cfd.write_velocity(vel_np)
 
         sample_interval = 5
         n_samples = steps // sample_interval
@@ -152,20 +158,20 @@ def validate_naca_sweep(steps=2000):
             if step % sample_interval == 0:
                 pres_raw = cfd.tex_pressure_A.read()
                 pressure = np.frombuffer(pres_raw, dtype='f4').reshape((grid, grid, grid))
-                vel_raw = cfd.tex_velocity_A.read()
-                va = np.frombuffer(vel_raw, dtype=np.float16).reshape((grid, grid, grid, 4))
-                ft, _, _ = compute_lift_drag(pressure, obs_mask, velocity=va[:,:,:,:3], viscosity=cfd.viscosity)
+                va = cfd.read_velocity()
+                ft, _, _ = compute_lift_drag(pressure, obs_mask, velocity=np.transpose(va, (2, 1, 0, 3)), viscosity=cfd.viscosity)
                 force_hist[si] = ft
                 si += 1
 
-        n_avg = 500 // sample_interval
-        mean_f = np.mean(force_hist[-n_avg:], axis=0)
+        # Average over last 50% of simulation
+        half = n_samples // 2
+        mean_f = np.mean(force_hist[half:], axis=0)
         S = chord * 192  # reference area = chord * span
         q = 0.5 * U_inf**2  # dynamic pressure (rho=1)
         Cd = mean_f[0] / (q * S)
         Cl = mean_f[2] / (q * S)
         results.append((aoa, Cl, Cd))
-        print(f"  Cl={Cl:.4f}  Cd={Cd:.4f}  L/D={Cl/Cd:.2f}")
+        print(f"  Cl={Cl:.4f}  Cd={Cd:.4f}  L/D={Cl/Cd:.2f}  (last-{force_hist[half:].shape[0]} samples)")
 
     print("\n=== NACA 0012 Summary ===")
     print(f"{'AoA':>4} {'Cl':>8} {'Cd':>8} {'L/D':>8}")

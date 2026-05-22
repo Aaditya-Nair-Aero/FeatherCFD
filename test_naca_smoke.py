@@ -34,6 +34,7 @@ vel_init_t = np.transpose(vel_init, (2, 1, 0, 3))
 cfd.tex_velocity_A.write(vel_init_t.tobytes())
 cfd.tex_velocity_B.write(vel_init_t.tobytes())
 
+# Read GPU mask
 obs_data = cfd.tex_obstacle.read()
 obs_mask = np.frombuffer(obs_data, dtype='u1').reshape((grid, grid, grid))
 
