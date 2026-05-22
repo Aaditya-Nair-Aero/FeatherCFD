@@ -1,0 +1,24 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(r32f, binding = 0) uniform readonly image3D u_pressure;
+layout(r32f, binding = 1) uniform readonly image3D u_correction;
+layout(r16f, binding = 2) uniform readonly image3D u_sdf;
+layout(r32f, binding = 3) uniform writeonly image3D u_out;
+
+layout(push_constant) uniform Params {
+    float u_omega;
+} params;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(u_pressure);
+    if (any(greaterThanEqual(texel, size))) return;
+
+    float sdf = imageLoad(u_sdf, texel).r;
+    float alpha = smoothstep(-0.5, 0.5, sdf);
+
+    float p = imageLoad(u_pressure, texel).r;
+    float corr = imageLoad(u_correction, texel).r;
+    imageStore(u_out, texel, vec4(p + corr * params.u_omega * alpha));
+}

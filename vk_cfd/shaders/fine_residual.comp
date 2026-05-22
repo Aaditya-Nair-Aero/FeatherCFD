@@ -1,0 +1,50 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(r32f, binding = 0) uniform readonly image3D u_pressure;
+layout(r16f, binding = 1) uniform readonly image3D u_divergence;
+layout(r8ui, binding = 2) uniform readonly uimage3D u_obstacle;
+layout(r16f, binding = 3) uniform readonly image3D u_sdf;
+layout(r32f, binding = 4) uniform writeonly image3D u_residual;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(u_pressure);
+    if (any(greaterThanEqual(texel, size))) return;
+    ivec3 max3 = size - ivec3(1);
+
+    if (texel.x <= 0 || texel.x >= max3.x ||
+        texel.y <= 0 || texel.y >= max3.y ||
+        texel.z <= 0 || texel.z >= max3.z) {
+        imageStore(u_residual, texel, vec4(0.0));
+        return;
+    }
+
+    float sdf = imageLoad(u_sdf, texel).r;
+    float alpha = smoothstep(-0.5, 0.5, sdf);
+    if (sdf < -0.5) {
+        imageStore(u_residual, texel, vec4(0.0));
+        return;
+    }
+
+    ivec3 L = texel - ivec3(1, 0, 0);
+    ivec3 R = texel + ivec3(1, 0, 0);
+    ivec3 D = texel - ivec3(0, 1, 0);
+    ivec3 U = texel + ivec3(0, 1, 0);
+    ivec3 B = texel - ivec3(0, 0, 1);
+    ivec3 F = texel + ivec3(0, 0, 1);
+
+    float pc = imageLoad(u_pressure, texel).r;
+    float pL = (L.x <= 0) ? pc : imageLoad(u_pressure, L).r;
+    float pR = (R.x >= max3.x) ? 0.0 : imageLoad(u_pressure, R).r;
+    float pD = (D.y <= 0) ? pc : imageLoad(u_pressure, D).r;
+    float pU = (U.y >= max3.y) ? pc : imageLoad(u_pressure, U).r;
+    float pB = (B.z <= 0) ? pc : imageLoad(u_pressure, B).r;
+    float pF = (F.z >= max3.z) ? pc : imageLoad(u_pressure, F).r;
+
+    float lap = pL + pR + pD + pU + pB + pF - 6.0 * pc;
+    float div = imageLoad(u_divergence, texel).r;
+    float res = div - lap;
+
+    imageStore(u_residual, texel, vec4(res * alpha));
+}

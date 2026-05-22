@@ -1,0 +1,12 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(rgba16f, binding = 0) uniform readonly image3D u_src;
+layout(rgba16f, binding = 1) uniform writeonly image3D u_dst;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(u_src);
+    if (any(greaterThanEqual(texel, size))) return;
+    imageStore(u_dst, texel, imageLoad(u_src, texel));
+}

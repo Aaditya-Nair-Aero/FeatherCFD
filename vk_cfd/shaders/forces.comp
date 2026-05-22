@@ -1,0 +1,65 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(rgba16f, binding = 0) uniform readonly image3D u_velocity;
+layout(rgba16f, binding = 1) uniform writeonly image3D u_velocity_out;
+layout(r8ui,    binding = 2) uniform readonly uimage3D u_obstacle;
+layout(r16f,    binding = 3) uniform readonly image3D u_sdf;
+
+layout(push_constant) uniform Params {
+    float u_dt;
+    float u_force_radius;
+    float pad0;
+    float pad1;
+    vec3 u_force_pos;
+    float pad2;
+    vec3 u_force_dir;
+    float pad3;
+    vec3 u_inflow_vel;
+} params;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(u_velocity);
+    if (any(greaterThanEqual(texel, size))) return;
+
+    ivec3 max3 = size - ivec3(1);
+
+    if (texel.x == 0) {
+        imageStore(u_velocity_out, texel, vec4(params.u_inflow_vel, 1.0));
+        return;
+    }
+
+    if (texel.x == max3.x) {
+        vec3 u_current = imageLoad(u_velocity, texel).xyz;
+        vec3 u_left = imageLoad(u_velocity, texel - ivec3(1, 0, 0)).xyz;
+        float uc = params.u_inflow_vel.x;
+        float cfl = min(uc * params.u_dt, 0.5);
+        imageStore(u_velocity_out, texel, vec4(u_current - cfl * (u_current - u_left), 1.0));
+        return;
+    }
+
+    if (texel.y <= 0 || texel.y >= max3.y ||
+        texel.z <= 0 || texel.z >= max3.z) {
+        imageStore(u_velocity_out, texel, vec4(0.0));
+        return;
+    }
+
+    float sdf = imageLoad(u_sdf, texel).r;
+    float alpha = smoothstep(-0.5, 0.5, sdf);
+    if (alpha < 0.001) {
+        imageStore(u_velocity_out, texel, vec4(0.0));
+        return;
+    }
+
+    vec3 u = imageLoad(u_velocity, texel).xyz;
+
+    vec3 cell_pos = vec3(texel) + 0.5;
+    float dist = distance(cell_pos, params.u_force_pos);
+    if (dist < params.u_force_radius) {
+        float falloff = 1.0 - (dist / params.u_force_radius);
+        u += params.u_dt * params.u_force_dir * falloff;
+    }
+
+    imageStore(u_velocity_out, texel, vec4(u * alpha, 1.0));
+}

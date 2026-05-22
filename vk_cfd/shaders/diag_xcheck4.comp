@@ -1,0 +1,22 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(rgba16f, binding = 0) uniform readonly image3D u_velocity;
+layout(rgba16f, binding = 1) uniform writeonly image3D u_velocity_out;
+layout(r8ui,    binding = 2) uniform readonly uimage3D u_obstacle;
+layout(r16f,    binding = 3) uniform readonly image3D u_sdf;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(u_velocity);
+    if (any(greaterThanEqual(texel, size))) return;
+    // Write (x+1)*0.01 for diagnostic
+    vec4 out_val = vec4(float(texel.x + 1) * 0.01, 0.0, 0.0, 1.0);
+    // Touch extra bindings to prevent elimination
+    uvec4 obs = imageLoad(u_obstacle, ivec3(0,0,0));
+    vec4 sdf_val = imageLoad(u_sdf, ivec3(0,0,0));
+    if (obs.r > 250u && sdf_val.r > 100.0) {
+        out_val = vec4(1.0);
+    }
+    imageStore(u_velocity_out, texel, out_val);
+}

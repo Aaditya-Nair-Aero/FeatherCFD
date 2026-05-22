@@ -1,0 +1,37 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(rgba16f, binding = 0) uniform readonly image3D u_velocity;
+layout(r8ui,    binding = 1) uniform readonly uimage3D u_obstacle;
+layout(r16f,    binding = 2) uniform readonly image3D u_sdf;
+layout(r16f,    binding = 3) uniform writeonly image3D u_divergence;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(u_velocity);
+    if (any(greaterThanEqual(texel, size))) return;
+    ivec3 max3 = size - ivec3(1);
+
+    if (texel.x <= 0 || texel.x >= max3.x ||
+        texel.y <= 0 || texel.y >= max3.y ||
+        texel.z <= 0 || texel.z >= max3.z) {
+        imageStore(u_divergence, texel, vec4(0.0));
+        return;
+    }
+
+    float sdf = imageLoad(u_sdf, texel).r;
+    if (sdf < -0.5) {
+        imageStore(u_divergence, texel, vec4(0.0));
+        return;
+    }
+    float alpha = smoothstep(-0.5, 0.5, sdf);
+
+    vec3 uc = imageLoad(u_velocity, texel).xyz;
+    float ux_right = imageLoad(u_velocity, texel + ivec3(1, 0, 0)).x;
+    float uy_up    = imageLoad(u_velocity, texel + ivec3(0, 1, 0)).y;
+    float uz_front = imageLoad(u_velocity, texel + ivec3(0, 0, 1)).z;
+
+    float div = (ux_right - uc.x) + (uy_up - uc.y) + (uz_front - uc.z);
+
+    imageStore(u_divergence, texel, vec4(div * alpha));
+}

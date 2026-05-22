@@ -1,0 +1,36 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(rgba16f, binding = 0) uniform readonly image3D u_velocity;
+layout(rgba16f, binding = 1) uniform writeonly image3D u_velocity_out;
+layout(rgba16f, binding = 2) uniform readonly image3D u_dummy2;
+layout(rgba16f, binding = 3) uniform readonly image3D u_dummy3;
+
+layout(push_constant) uniform Params {
+    float u_dt;
+    float u_force_radius;
+    float pad0;
+    float pad1;
+    vec3 u_force_pos;
+    float pad2;
+    vec3 u_force_dir;
+    float pad3;
+    vec3 u_inflow_vel;
+} params;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(u_velocity);
+    if (any(greaterThanEqual(texel, size))) return;
+    
+    if (texel.x == 0) {
+        imageStore(u_velocity_out, texel, vec4(params.u_inflow_vel, 1.0));
+        return;
+    }
+    
+    // Read dummy images to prevent elimination
+    vec4 d2 = imageLoad(u_dummy2, ivec3(0,0,0));
+    vec4 d3 = imageLoad(u_dummy3, ivec3(0,0,0));
+    
+    imageStore(u_velocity_out, texel, imageLoad(u_velocity, texel) + d2 * 0 + d3 * 0);
+}

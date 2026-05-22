@@ -1,0 +1,51 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(r32f, binding = 0) uniform readonly image3D u_coarse;
+layout(r32f, binding = 1) uniform writeonly image3D u_fine;
+
+vec3 load_trilinear(ivec3 c, ivec3 csize) {
+    ivec3 c0 = clamp(c, ivec3(0), csize - ivec3(1));
+    ivec3 c1 = clamp(c + ivec3(1,1,1), ivec3(0), csize - ivec3(1));
+    float v000 = imageLoad(u_coarse, ivec3(c0.x, c0.y, c0.z)).r;
+    float v100 = imageLoad(u_coarse, ivec3(c1.x, c0.y, c0.z)).r;
+    float v010 = imageLoad(u_coarse, ivec3(c0.x, c1.y, c0.z)).r;
+    float v110 = imageLoad(u_coarse, ivec3(c1.x, c1.y, c0.z)).r;
+    float v001 = imageLoad(u_coarse, ivec3(c0.x, c0.y, c1.z)).r;
+    float v101 = imageLoad(u_coarse, ivec3(c1.x, c0.y, c1.z)).r;
+    float v011 = imageLoad(u_coarse, ivec3(c0.x, c1.y, c1.z)).r;
+    float v111 = imageLoad(u_coarse, ivec3(c1.x, c1.y, c1.z)).r;
+    return vec3(v000, v100, v010);
+}
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 fsize = imageSize(u_fine);
+    if (any(greaterThanEqual(texel, fsize))) return;
+
+    ivec3 csize = imageSize(u_coarse);
+    vec3 f = vec3(texel) / 2.0;
+    ivec3 c = ivec3(floor(f));
+    vec3 xi = f - vec3(c);
+
+    c = clamp(c, ivec3(0), csize - ivec3(2));
+
+    float c000 = imageLoad(u_coarse, ivec3(c.x,   c.y,   c.z)).r;
+    float c100 = imageLoad(u_coarse, ivec3(c.x+1, c.y,   c.z)).r;
+    float c010 = imageLoad(u_coarse, ivec3(c.x,   c.y+1, c.z)).r;
+    float c110 = imageLoad(u_coarse, ivec3(c.x+1, c.y+1, c.z)).r;
+    float c001 = imageLoad(u_coarse, ivec3(c.x,   c.y,   c.z+1)).r;
+    float c101 = imageLoad(u_coarse, ivec3(c.x+1, c.y,   c.z+1)).r;
+    float c011 = imageLoad(u_coarse, ivec3(c.x,   c.y+1, c.z+1)).r;
+    float c111 = imageLoad(u_coarse, ivec3(c.x+1, c.y+1, c.z+1)).r;
+
+    float v00 = c000 + (c100 - c000) * xi.x;
+    float v01 = c001 + (c101 - c001) * xi.x;
+    float v10 = c010 + (c110 - c010) * xi.x;
+    float v11 = c011 + (c111 - c011) * xi.x;
+    float v0 = v00 + (v10 - v00) * xi.y;
+    float v1 = v01 + (v11 - v01) * xi.y;
+    float val = v0 + (v1 - v0) * xi.z;
+
+    imageStore(u_fine, texel, vec4(val));
+}
