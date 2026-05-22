@@ -125,6 +125,7 @@ class CFD_System:
         self.tex_k4.repeat_y = False
         self.tex_k4.repeat_z = False
 
+        # FBOs for RK4 textures
         self.fbo_velocity_init = self._setup_3d_fbo(self.tex_velocity_init, self.grid_size)
         self.fbo_k1 = self._setup_3d_fbo(self.tex_k1, self.grid_size)
         self.fbo_k2 = self._setup_3d_fbo(self.tex_k2, self.grid_size)
@@ -491,6 +492,7 @@ class CFD_System:
         self.mg_corr_A[level_idx].write(z.tobytes())
         self.mg_corr_B[level_idx].write(z.tobytes())
 
+    # ---- Multigrid V-cycle ----
 
     def _two_grid(self):
         """2-grid V-cycle: 192³ → 96³ → 192³ with RBGS smoothing."""
@@ -535,24 +537,29 @@ class CFD_System:
         """7-point Laplacian on CPU with proper BCs: Neumann at walls/inflow, Dirichlet at outflow."""
         N = p.shape[0]
         lap = np.zeros_like(p)
+        # Interior: standard 7-point stencil
         lap[1:-1, 1:-1, 1:-1] = (
             p[:-2, 1:-1, 1:-1] + p[2:, 1:-1, 1:-1] +
             p[1:-1, :-2, 1:-1] + p[1:-1, 2:, 1:-1] +
             p[1:-1, 1:-1, :-2] + p[1:-1, 1:-1, 2:] -
             6.0 * p[1:-1, 1:-1, 1:-1]
         ) / (dx * dx)
+        # Inflow (X=0): Neumann ∂p/∂x=0 → ghost cell equals interior
         lap[0, 1:-1, 1:-1] = (
             p[0, 1:-1, 1:-1] + p[1, 1:-1, 1:-1] +
             p[0, :-2, 1:-1] + p[0, 2:, 1:-1] +
             p[0, 1:-1, :-2] + p[0, 1:-1, 2:] -
             6.0 * p[0, 1:-1, 1:-1]
         ) / (dx * dx)
+        # Outflow (X=-1): Dirichlet p=0 at face between N-1 and N
+        # Ghost at N satisfies: (p[-1] + ghost)/2 = 0 → ghost = -p[-1]
         lap[-1, 1:-1, 1:-1] = (
             p[-2, 1:-1, 1:-1] + (-p[-1, 1:-1, 1:-1]) +
             p[-1, :-2, 1:-1] + p[-1, 2:, 1:-1] +
             p[-1, 1:-1, :-2] + p[-1, 1:-1, 2:] -
             6.0 * p[-1, 1:-1, 1:-1]
         ) / (dx * dx)
+        # Y-walls: Neumann ∂p/∂y=0
         lap[1:-1, 0, 1:-1] = (
             p[:-2, 0, 1:-1] + p[2:, 0, 1:-1] +
             p[1:-1, 0, 1:-1] + p[1:-1, 1, 1:-1] +
@@ -565,6 +572,7 @@ class CFD_System:
             p[1:-1, -1, :-2] + p[1:-1, -1, 2:] -
             6.0 * p[1:-1, -1, 1:-1]
         ) / (dx * dx)
+        # Z-walls: Neumann ∂p/∂z=0
         lap[1:-1, 1:-1, 0] = (
             p[:-2, 1:-1, 0] + p[2:, 1:-1, 0] +
             p[1:-1, :-2, 0] + p[1:-1, 2:, 0] +
@@ -612,10 +620,12 @@ class CFD_System:
         obs_bool = obs > 0
         div[obs_bool] = 0.0
 
+        # Warm-start from current GPU pressure
         p_data = self.tex_pressure_A.read()
         p = np.frombuffer(p_data, dtype=np.float32).reshape((N, N, N)).astype(np.float64)
         p[obs_bool] = 0.0
 
+        # FFT eigenvalues of periodic 7-point Laplacian
         kx = np.fft.fftfreq(N) * 2.0 * np.pi
         ky = np.fft.fftfreq(N) * 2.0 * np.pi
         kz = np.fft.fftfreq(N) * 2.0 * np.pi
@@ -646,14 +656,17 @@ class CFD_System:
             if r_norm < tol * div_norm and it > 0:
                 break
 
+            # Make residual mean-zero (compatibility for Neumann BCs)
             r_mean = np.mean(r[fluid])
             r[fluid] -= r_mean
 
             R_hat = fftn(r)
             dp = np.real(ifftn(R_hat / eig))
 
+            # Clamp dp to prevent blowup
             dp = np.clip(dp, -100.0, 100.0)
 
+            # Enforce BCs and obstacles on correction
             dp[obs_bool] = -p[obs_bool]
             dp[outflow] = -p[outflow]
             dp[walls] = 0.0
@@ -710,6 +723,7 @@ class CFD_System:
         self.tex_pressure_A.write(p_f32.tobytes())
         self.tex_pressure_B.write(p_f32.tobytes())
 
+        # GPU RBGS post-smoothing (matches DST BCs exactly)
         if n_smooth > 0:
             self._fine_rbgs(n_smooth)
 
@@ -737,6 +751,7 @@ class CFD_System:
             self._update_dt()
             self._dt_counter = 0
 
+        # PASS 1: Add Forces (A -> B)
         self.tex_velocity_A.use(location=0)
         self.prog_forces['u_velocity'].value = 0
         self.prog_forces['u_dt'].value = self.dt
@@ -745,6 +760,7 @@ class CFD_System:
         self.prog_forces['u_force_radius'].value = float(force_radius)
         self.render_pass(self.prog_forces, self.fbo_velocity_B)
 
+        # PASS 2: Advection (B -> A) with molecular + SGS viscosity
         self.tex_velocity_B.use(location=0)
         self.prog_advection['u_velocity'].value = 0
         self.prog_advection['u_dt'].value = self.dt
@@ -752,12 +768,15 @@ class CFD_System:
         self.prog_advection['u_sgs_coeff'].value = self.sgs_coeff
         self.render_pass(self.prog_advection, self.fbo_velocity_A)
 
+        # PASS 3: Divergence (A -> Div)
         self.tex_velocity_A.use(location=0)
         self.prog_divergence['u_velocity'].value = 0
         self.render_pass(self.prog_divergence, self.fbo_divergence)
 
+        # PASS 4: Pressure Solve (Multigrid V-cycle)
         self._mg_solve()
 
+        # PASS 5: Projection (A + Pressure -> B)
         self.tex_velocity_A.use(location=0)
         self.tex_pressure_A.use(location=1)
         self.prog_projection['u_velocity'].value = 0
@@ -765,6 +784,7 @@ class CFD_System:
         self.prog_projection['u_dt'].value = self.dt
         self.render_pass(self.prog_projection, self.fbo_velocity_B)
 
+        # PASS 6: Density Advection
         self.tex_velocity_B.use(location=0)
         self.tex_density_A.use(location=1)
         self.prog_advection_density['u_velocity'].value = 0
@@ -784,6 +804,7 @@ class CFD_System:
             self._update_dt()
             self._dt_counter = 0
 
+        # Save initial velocity u^n
         self.tex_velocity_A.use(location=0)
         init_data = self.tex_velocity_A.read()
         self.tex_velocity_init.write(init_data)
@@ -791,22 +812,27 @@ class CFD_System:
         self.tex_obstacle.use(location=2)
         self.tex_sdf.use(location=3)
 
+        # Clear k accumulators
         zero = np.zeros((self.grid_size, self.grid_size, self.grid_size, 4), dtype='f2')
         self.tex_k1.write(zero.tobytes())
         self.tex_k2.write(zero.tobytes())
         self.tex_k3.write(zero.tobytes())
         self.tex_k4.write(zero.tobytes())
 
+        # Helper: run one RK4 stage and save k_i
         def run_stage(coeff, k_prev_tex, k_prev_fbo, k_dst_fbo):
+            # Setup: u_stage = u_init + coeff * k_prev -> B
             self.tex_velocity_init.use(location=0)
             k_prev_tex.use(location=1)
             self.prog_rk4_setup['u_init'].value = 0
             self.prog_rk4_setup['u_kprev'].value = 1
             self.prog_rk4_setup['u_coeff'].value = coeff
             self.render_pass(self.prog_rk4_setup, self.fbo_velocity_B)
+            # Save u_stage (in B) to stage_save before forces overwrites it
             self.tex_velocity_B.use(location=0)
             self.prog_copy['u_src'].value = 0
             self.render_pass(self.prog_copy, self.fbo_stage_save)
+            # Forces: B -> A
             self.tex_velocity_B.use(location=0)
             self.prog_forces['u_velocity'].value = 0
             self.prog_forces['u_dt'].value = self.dt
@@ -814,26 +840,33 @@ class CFD_System:
             self.prog_forces['u_force_dir'].value = tuple(force_dir)
             self.prog_forces['u_force_radius'].value = float(force_radius)
             self.render_pass(self.prog_forces, self.fbo_velocity_A)
+            # Advection: A -> B
             self.tex_velocity_A.use(location=0)
             self.prog_advection['u_velocity'].value = 0
             self.prog_advection['u_dt'].value = self.dt
             self.prog_advection['u_viscosity'].value = self.viscosity
             self.prog_advection['u_sgs_coeff'].value = self.sgs_coeff
             self.render_pass(self.prog_advection, self.fbo_velocity_B)
+            # Save k = result(B) - u_stage(stage_save)
             self.tex_velocity_B.use(location=0)
             self.tex_stage_save.use(location=1)
             self.prog_rk4_save_k['u_result'].value = 0
             self.prog_rk4_save_k['u_input'].value = 1
             self.render_pass(self.prog_rk4_save_k, k_dst_fbo)
 
+        # Stage 1: k1 = dt * RHS(u^n), coeff=0 (u_stage = u^n)
         run_stage(0.0, self.tex_k2, self.fbo_k2, self.fbo_k1)
 
+        # Stage 2: k2 = dt * RHS(u^n + 0.5*k1)
         run_stage(0.5, self.tex_k1, self.fbo_k1, self.fbo_k2)
 
+        # Stage 3: k3 = dt * RHS(u^n + 0.5*k2)
         run_stage(0.5, self.tex_k2, self.fbo_k2, self.fbo_k3)
 
+        # Stage 4: k4 = dt * RHS(u^n + k3)
         run_stage(1.0, self.tex_k3, self.fbo_k3, self.fbo_k4)
 
+        # Combine: u^{n+1} = u^n + (k1 + 2*k2 + 2*k3 + k4)/6 -> vel_A
         self.tex_velocity_init.use(location=0)
         self.tex_k1.use(location=1)
         self.tex_k2.use(location=2)
@@ -846,12 +879,15 @@ class CFD_System:
         self.prog_rk4_combine['u_k4'].value = 4
         self.render_pass(self.prog_rk4_combine, self.fbo_velocity_A)
 
+        # Divergence (A -> Div)
         self.tex_velocity_A.use(location=0)
         self.prog_divergence['u_velocity'].value = 0
         self.render_pass(self.prog_divergence, self.fbo_divergence)
 
+        # Pressure Solve
         self._mg_solve()
 
+        # Projection (A + Pressure -> B)
         self.tex_velocity_A.use(location=0)
         self.tex_pressure_A.use(location=1)
         self.prog_projection['u_velocity'].value = 0
@@ -859,6 +895,7 @@ class CFD_System:
         self.prog_projection['u_dt'].value = self.dt
         self.render_pass(self.prog_projection, self.fbo_velocity_B)
 
+        # Density Advection
         self.tex_velocity_B.use(location=0)
         self.tex_density_A.use(location=1)
         self.prog_advection_density['u_velocity'].value = 0
@@ -868,5 +905,6 @@ class CFD_System:
         self.tex_density_A, self.tex_density_B = self.tex_density_B, self.tex_density_A
         self.fbo_density_A, self.fbo_density_B = self.fbo_density_B, self.fbo_density_A
 
+        # Swap velocity buffers for next step
         self.tex_velocity_A, self.tex_velocity_B = self.tex_velocity_B, self.tex_velocity_A
         self.fbo_velocity_A, self.fbo_velocity_B = self.fbo_velocity_B, self.fbo_velocity_A

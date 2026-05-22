@@ -9,6 +9,10 @@ class EulerSolver:
         self.gamma = 1.4
         self.dt = 0.1
 
+        # 5 conserved variables packed into 2 textures:
+        # tex_U1: (rho, mom_x, mom_y, mom_z) RGBA16F
+        # tex_U2: (E) R16F
+        # Each has A/B ping-pong buffers + a third "old" copy for RK
 
         def make_tex(components=4, dtype='f2'):
             tex = self.ctx.texture3d((self.grid_size, self.grid_size, self.grid_size), components, dtype=dtype)
@@ -52,6 +56,7 @@ class EulerSolver:
         self.fbo_U2_B = make_fbo(self.tex_U2_B)
         self.fbo_U2_old = make_fbo(self.tex_U2_old)
 
+        # FBO for dual-color-attachment rendering (U1 + U2 at once)
         self.fbo_dual = self._make_dual_fbo(self.tex_U1_B, self.tex_U2_B)
         self.fbo_dual_A = self._make_dual_fbo(self.tex_U1, self.tex_U2)
         self.fbo_dual_old = self._make_dual_fbo(self.tex_U1_old, self.tex_U2_old)
@@ -120,6 +125,7 @@ class EulerSolver:
         if p is None:
             p = 1.0 / self.gamma
         E = p / (self.gamma - 1.0) + 0.5 * rho * (u*u + v*v + w*w)
+        # Round-trip through float16 so inflow matches texture storage
         f16 = np.array([rho, rho*u, rho*v, rho*w, E], dtype='f2')
         self.U_inflow = np.array(f16, dtype='f4')
 
@@ -143,9 +149,11 @@ class EulerSolver:
         half = g // 2
         gamma = self.gamma
 
+        # Left state
         rho_L = 1.0
         u_L = 0.0
         p_L = 1.0
+        # Right state
         rho_R = 0.125
         u_R = 0.0
         p_R = 0.1
@@ -198,9 +206,11 @@ class EulerSolver:
         inf1 = self.U_inflow
         p['u_inflow1'].value = (inf1[0], inf1[1], inf1[2], inf1[3])
         p['u_inflow2'].value = (inf1[4], 0.0, 0.0, 0.0)
+        # Internal energy (p_inf/(gamma-1)) for obstacle cells
         e_int = inf1[4] - 0.5 * (inf1[1]*inf1[1] + inf1[2]*inf1[2] + inf1[3]*inf1[3]) / max(inf1[0], 1e-8)
         p['u_inflow3'].value = (float(e_int), 0.0, 0.0, 0.0)
 
+        # Bind textures
         self.tex_U1_B.use(location=0)  # Current state (evolving)
         self.tex_U2_B.use(location=1)
         self.tex_U1_old.use(location=2)  # U^n
@@ -214,27 +224,35 @@ class EulerSolver:
         p['u_obstacle'].value = 4
         p['u_sdf'].value = 5
 
+        # Render to dual FBO (both U1 and U2)
         self.render_pass_dual(p, self.fbo_dual)
 
     def step(self):
         """One full timestep with SSP-RK3"""
+        # Adaptive CFL: update dt every N steps
         self._dt_counter += 1
         if self._dt_counter >= self.dt_update_interval:
             self._update_dt()
             self._dt_counter = 0
+        # Copy U^n (in A) to old buffer for reference
         data1 = self.tex_U1.read()
         data2 = self.tex_U2.read()
         self.tex_U1_old.write(data1)
         self.tex_U2_old.write(data2)
+        # Copy U^n to B as initial evolving state
         self.tex_U1_B.write(data1)
         self.tex_U2_B.write(data2)
 
+        # Stage 1: U(1) = 1*U^n + 0*U^n + 1*dt*L(U^n)
         self._run_stage(1.0, 0.0, 1.0)
 
+        # Stage 2: U(2) = 0.75*U^n + 0.25*U(1) + 0.25*dt*L(U(1))
         self._run_stage(0.75, 0.25, 0.25)
 
+        # Stage 3: U^{n+1} = 1/3*U^n + 2/3*U(2) + 2/3*dt*L(U(2))
         self._run_stage(1.0/3.0, 2.0/3.0, 2.0/3.0)
 
+        # Swap A and B so new state is in A
         self._swap()
 
     def _update_dt(self):

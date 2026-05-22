@@ -1,0 +1,29 @@
+#version 450 core
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(r32f, binding = 0) uniform readonly image3D u_fine;
+layout(r32f, binding = 1) uniform writeonly image3D u_coarse;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    ivec3 csize = imageSize(u_coarse);
+    if (any(greaterThanEqual(texel, csize))) return;
+
+    ivec3 f = texel * 2;
+    ivec3 fsize = imageSize(u_fine);
+
+    float sum = 0.0;
+    float count = 0.0;
+    for (int k = 0; k <= 1; k++) {
+        for (int j = 0; j <= 1; j++) {
+            for (int i = 0; i <= 1; i++) {
+                ivec3 fp = f + ivec3(i, j, k);
+                if (all(lessThan(fp, fsize))) {
+                    sum += imageLoad(u_fine, fp).r;
+                    count += 1.0;
+                }
+            }
+        }
+    }
+    imageStore(u_coarse, texel, vec4(sum / count));
+}

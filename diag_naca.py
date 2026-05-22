@@ -22,6 +22,7 @@ cfd.set_obstacle(mask)
 cfd.tex_sdf.write(np.transpose(sdf, (2, 1, 0)).astype(np.float16).tobytes())
 cfd.set_reynolds(Re, char_length=chord)
 
+# Match working cylinder validation settings
 cfd.sgs_coeff = 0.0
 cfd.jacobi_iters = 80
 print(f'Config: sgs={cfd.sgs_coeff}, jacobi={cfd.jacobi_iters}, Re={Re}')

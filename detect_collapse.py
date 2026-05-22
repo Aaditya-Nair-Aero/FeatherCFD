@@ -34,6 +34,7 @@ vel_init = np.where(me > 0, 0, vel_init)
 cfd.tex_velocity_A.write(np.transpose(vel_init, (2, 1, 0, 3)).tobytes())
 cfd.tex_velocity_B.write(np.transpose(vel_init, (2, 1, 0, 3)).tobytes())
 
+# Track state at each step, print when collapse is near
 prev_ux_max = U_inf
 for step in range(1, 301):
     cfd.step(force_radius=0.0)
@@ -42,6 +43,7 @@ for step in range(1, 301):
     ux_max = float(vel[:,:,:,0].max())
     uz_max = float(np.abs(vel[:,:,:,2]).max())
     
+    # Detect impending collapse: ux drops sharply
     if ux_max < prev_ux_max * 0.7 and step > 20:
         pres = np.frombuffer(cfd.tex_pressure_A.read(), dtype='f4').reshape((grid, grid, grid))
         print(f'\n*** COLLAPSE DETECTED at step {step} ***')
@@ -50,6 +52,7 @@ for step in range(1, 301):
         print(f'  p range: [{pres.min():+.3f}, {pres.max():+.3f}]')
         print(f'  dt: {cfd.dt:.6f}')
         
+        # Check velocity field at key locations
         print(f'  Velocity at X=0,Y=96,Z=96: {vel[96,96,0,:3]}')
         print(f'  Velocity at X=24,Y=96,Z=96: {vel[96,96,24,:3]}')
         print(f'  Velocity at X=48,Y=96,Z=96: {vel[96,96,48,:3]}')
@@ -57,6 +60,7 @@ for step in range(1, 301):
         print(f'  Velocity at X=144,Y=96,Z=96: {vel[96,96,144,:3]}')
         print(f'  Velocity at X=191,Y=96,Z=96: {vel[96,96,191,:3]}')
         
+        # Check if div also collapsed
         div = np.frombuffer(cfd.tex_divergence.read(), dtype=np.float16).reshape((grid, grid, grid))
         print(f'  div range: [{div.min():+.6f}, {div.max():+.6f}]')
         print(f'  div non-zero: {(np.abs(div) > 1e-6).sum()}')

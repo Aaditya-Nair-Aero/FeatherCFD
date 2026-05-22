@@ -57,6 +57,7 @@ for step in range(1, 1001):
 
 elapsed = time.perf_counter() - t0
 force_hist = np.array(force_hist)
+# Average last 20 samples
 Cl_avg = np.mean(force_hist[-20:, 1])
 Cd_avg = np.mean(force_hist[-20:, 2])
 print(f'\n1000 steps in {elapsed:.0f}s ({elapsed/1000*1000:.0f}ms/step)')

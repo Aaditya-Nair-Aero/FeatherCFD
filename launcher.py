@@ -13,6 +13,7 @@ import threading
 import time
 import numpy as np
 
+# ── Constants ──────────────────────────────────────────────────────────
 DARK_BG = "#1a1a2e"
 DARK_FG = "#e0e0e0"
 DARK_CARD = "#16213e"
@@ -21,6 +22,7 @@ DARK_ACCENT2 = "#e94560"
 DARK_INPUT = "#0f3460"
 DARK_BORDER = "#2a2a4a"
 
+# ── NACA profile generator ─────────────────────────────────────────────
 def naca_4_digit_coords(digits, n_points=200):
     """Returns (x, y_upper, y_lower) for a NACA 4-digit airfoil."""
     m = int(digits[0]) / 100.0
@@ -40,12 +42,14 @@ def naca_4_digit_coords(digits, n_points=200):
 
 def naca_5_digit_coords(digits, n_points=200):
     """NACA 5-digit: LPQXX — L=lift, P=pos of max camber/20, Q=reflex, XX=thickness"""
+    # Simplified: just thickness distribution with camber
     L = int(digits[0])
     P = int(digits[1])
     Q = int(digits[2])
     t = int(digits[3:]) / 100.0
     x = np.linspace(0, 1, n_points)
     yt = 5 * t * (0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1015*x**4)
+    # Approximate mean line for 5-digit
     m = P / 20.0
     cl_max = L * 0.15
     if Q == 0:  # simple
@@ -89,6 +93,7 @@ def naca_description(digits):
         return f"NACA {digits}"
 
 
+# ── Object definitions ─────────────────────────────────────────────────
 OBJECT_TYPES = {
     "NACA 4-Digit": {
         "variants": [f"{m:02d}{p:02d}" for m in range(0, 10) for p in range(0, 10)] +
@@ -137,6 +142,7 @@ OBJECT_TYPES = {
 }
 
 
+# ── Dark Theme ─────────────────────────────────────────────────────────
 def setup_dark_theme():
     style = ttk.Style()
     style.theme_use("clam")
@@ -176,6 +182,7 @@ def setup_dark_theme():
     return style
 
 
+# ── Airfoil Preview Canvas ─────────────────────────────────────────────
 class AirfoilPreview(tk.Canvas):
     def __init__(self, parent, **kw):
         super().__init__(parent, bg=DARK_BG, highlightthickness=1,
@@ -212,6 +219,7 @@ class AirfoilPreview(tk.Canvas):
         for xi, yui, yli in reversed(list(zip(x, yu, yl))):
             pts_lo.append(transform(xi, yli))
 
+        # Fill
         fill_coords = []
         for px, py in pts_up:
             fill_coords.extend([px, py])
@@ -221,6 +229,7 @@ class AirfoilPreview(tk.Canvas):
                             width=1.5, stipple="")
 
 
+# ── Main Application ───────────────────────────────────────────────────
 class CFDLauncher:
     def __init__(self):
         self.root = tk.Tk()
@@ -236,6 +245,7 @@ class CFDLauncher:
 
         self.style = setup_dark_theme()
 
+        # State
         self.state = {
             "object_type": "NACA 4-Digit",
             "naca_digits": "0012",
@@ -251,6 +261,7 @@ class CFDLauncher:
             "density": 1.0,
             "viscosity": None,
             "solver": "vcycle",
+            "engine": "opengl",
             "steps": 500,
             "save_every": 2,
         }
@@ -263,7 +274,9 @@ class CFDLauncher:
         self._build_ui()
         self._update_preview()
 
+    # ── UI Builder ─────────────────────────────────────────────────────
     def _build_ui(self):
+        # Header
         header = tk.Frame(self.root, bg=DARK_CARD, height=50)
         header.pack(fill="x")
         header.pack_propagate(False)
@@ -271,6 +284,7 @@ class CFDLauncher:
                  font=("Segoe UI", 16, "bold"), bg=DARK_CARD,
                  fg=DARK_ACCENT).pack(side="left", padx=20, pady=10)
 
+        # Main content area — notebook for wizard steps
         self.notebook = ttk.Notebook(self.root, style="TNotebook")
         self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
@@ -281,18 +295,22 @@ class CFDLauncher:
         style.map("TNotebook.Tab", background=[("selected", DARK_ACCENT)],
                   foreground=[("selected", "white")])
 
+        # Tab 1: Object Selection
         self.tab_obj = tk.Frame(self.notebook, bg=DARK_BG)
         self.notebook.add(self.tab_obj, text="  1. Select Object  ")
         self._build_tab_object()
 
+        # Tab 2: Emitter Placement (placeholder)
         self.tab_emit = tk.Frame(self.notebook, bg=DARK_BG)
         self.notebook.add(self.tab_emit, text="  2. Emitters  ")
         self._build_tab_emitter()
 
+        # Tab 3: Fluid Properties
         self.tab_fluid = tk.Frame(self.notebook, bg=DARK_BG)
         self.notebook.add(self.tab_fluid, text="  3. Fluid & Sim  ")
         self._build_tab_fluid()
 
+        # Tab 4: Run
         self.tab_run = tk.Frame(self.notebook, bg=DARK_BG)
         self.notebook.add(self.tab_run, text="  4. Run  ")
         self._build_tab_run()
@@ -303,6 +321,7 @@ class CFDLauncher:
         tab.columnconfigure(1, weight=2)
         tab.rowconfigure(0, weight=1)
 
+        # Left panel — object selection
         left = tk.Frame(tab, bg=DARK_CARD, padx=15, pady=15)
         left.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
@@ -314,6 +333,7 @@ class CFDLauncher:
                                 state="readonly", width=25)
         obj_menu.pack(fill="x", pady=(0, 15))
 
+        # NACA controls
         self.naca_frame = tk.Frame(left, bg=DARK_CARD)
         self.naca_frame.pack(fill="x", pady=(0, 10))
 
@@ -329,6 +349,7 @@ class CFDLauncher:
                  font=("Segoe UI", 8), bg=DARK_CARD,
                  fg="#7f8fa6").pack(anchor="w")
 
+        # NACA common presets
         self.presets_frame = tk.Frame(self.naca_frame, bg=DARK_CARD)
         self.presets_frame.pack(fill="x", pady=(5, 0))
         for preset in ["0006", "0012", "0015", "0018", "0021", "0025", "2412", "4412"]:
@@ -339,6 +360,7 @@ class CFDLauncher:
                            command=lambda p=preset: self.naca_var.set(p))
             btn.pack(side="left", padx=1, pady=1)
 
+        # AoA slider
         tk.Label(left, text="Angle of Attack",
                  font=("Segoe UI", 10), bg=DARK_CARD,
                  fg=DARK_FG).pack(anchor="w", pady=(10, 0))
@@ -355,6 +377,7 @@ class CFDLauncher:
         self.aoa_var.trace_add("write", lambda *a: self.aoa_label.configure(
             text=f"{self.aoa_var.get():.1f}°"))
 
+        # Re & chord
         prop_frame = tk.Frame(left, bg=DARK_CARD)
         prop_frame.pack(fill="x", pady=(10, 0))
         tk.Label(prop_frame, text="Re", bg=DARK_CARD, fg=DARK_FG,
@@ -368,6 +391,7 @@ class CFDLauncher:
         ttk.Entry(prop_frame, textvariable=self.chord_var, width=10).grid(
             row=1, column=1, padx=5)
 
+        # Grid size
         tk.Label(left, text="Grid Size", font=("Segoe UI", 10),
                  bg=DARK_CARD, fg=DARK_FG).pack(anchor="w", pady=(10, 0))
         self.grid_var = tk.StringVar(value="192")
@@ -375,6 +399,7 @@ class CFDLauncher:
                      values=["96", "128", "192", "256"],
                      state="readonly", width=10).pack(anchor="w")
 
+        # .STL path
         self.stl_frame = tk.Frame(left, bg=DARK_CARD)
         self.stl_path_var = tk.StringVar(value="")
         tk.Label(self.stl_frame, text="STL File", bg=DARK_CARD, fg=DARK_FG,
@@ -387,11 +412,13 @@ class CFDLauncher:
                    style="TButton", width=8).pack(side="right", padx=3)
         self.stl_frame.pack_forget()
 
+        # Description
         self.desc_label = tk.Label(left, text="", font=("Segoe UI", 9),
                                    bg=DARK_CARD, fg="#7f8fa6", wraplength=250,
                                    justify="left")
         self.desc_label.pack(anchor="w", pady=(5, 0))
 
+        # Right panel — preview
         right = tk.Frame(tab, bg=DARK_BG)
         right.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
@@ -405,6 +432,7 @@ class CFDLauncher:
         self.preview = AirfoilPreview(preview_frame, width=400, height=350)
         self.preview.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
+        # 3D object info
         info_frame = tk.Frame(preview_frame, bg=DARK_CARD)
         info_frame.pack(fill="x", padx=10, pady=(0, 10))
         self.info_text = tk.Text(info_frame, height=5, bg=DARK_CARD,
@@ -413,6 +441,7 @@ class CFDLauncher:
         self.info_text.pack(fill="x")
         self.info_text.insert("1.0", "Select an object to see details.")
 
+        # Next button at bottom right
         btn_frame = tk.Frame(tab, bg=DARK_BG)
         btn_frame.grid(row=1, column=0, columnspan=2, sticky="e", padx=10, pady=10)
         ttk.Button(btn_frame, text="Next →  Emitter Placement",
@@ -469,6 +498,7 @@ class CFDLauncher:
         right = tk.Frame(tab, bg=DARK_CARD, padx=15, pady=15)
         right.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
+        # Left: Mode selection
         tk.Label(left, text="Flow Mode", font=("Segoe UI", 12, "bold"),
                  bg=DARK_CARD, fg=DARK_FG).pack(anchor="w", pady=(0, 10))
         self.mode_var = tk.StringVar(value="incompressible")
@@ -479,24 +509,28 @@ class CFDLauncher:
 
         tk.Label(left, text="", bg=DARK_CARD).pack(pady=5)
 
+        # Mach
         tk.Label(left, text="Mach Number (compressible)",
                  font=("Segoe UI", 10), bg=DARK_CARD,
                  fg=DARK_FG).pack(anchor="w")
         self.mach_var = tk.StringVar(value="0.5")
         ttk.Entry(left, textvariable=self.mach_var, width=10).pack(anchor="w")
 
+        # Velocity
         tk.Label(left, text="Flow Velocity (incompressible)",
                  font=("Segoe UI", 10), bg=DARK_CARD,
                  fg=DARK_FG).pack(anchor="w", pady=(5, 0))
         self.vel_var = tk.StringVar(value="2.0")
         ttk.Entry(left, textvariable=self.vel_var, width=10).pack(anchor="w")
 
+        # Density
         tk.Label(left, text="Fluid Density",
                  font=("Segoe UI", 10), bg=DARK_CARD,
                  fg=DARK_FG).pack(anchor="w", pady=(5, 0))
         self.density_var = tk.StringVar(value="1.0")
         ttk.Entry(left, textvariable=self.density_var, width=10).pack(anchor="w")
 
+        # Right: Solver settings
         tk.Label(right, text="Solver", font=("Segoe UI", 12, "bold"),
                  bg=DARK_CARD, fg=DARK_FG).pack(anchor="w", pady=(0, 10))
         self.solver_var = tk.StringVar(value="vcycle")
@@ -505,6 +539,16 @@ class CFDLauncher:
                            variable=self.solver_var, value=s).pack(
                 anchor="w", pady=2)
 
+        tk.Label(right, text="", bg=DARK_CARD).pack(pady=5)
+        tk.Label(right, text="Engine", font=("Segoe UI", 12, "bold"),
+                 bg=DARK_CARD, fg=DARK_FG).pack(anchor="w", pady=(0, 10))
+        self.engine_var = tk.StringVar(value="opengl")
+        for eng in ["opengl", "vulkan"]:
+            ttk.Radiobutton(right, text=eng.capitalize(),
+                           variable=self.engine_var, value=eng).pack(
+                anchor="w", pady=2)
+
+        # Simulation parameters
         params = tk.Frame(right, bg=DARK_CARD)
         params.pack(fill="x", pady=10)
 
@@ -522,6 +566,7 @@ class CFDLauncher:
         ttk.Entry(params, textvariable=self.save_var, width=10).grid(
             row=1, column=1, padx=5)
 
+        # Viscosity override
         tk.Label(params, text="Viscosity (blank = auto from Re)",
                  font=("Segoe UI", 10), bg=DARK_CARD,
                  fg=DARK_FG).grid(row=2, column=0, sticky="w", pady=5)
@@ -529,6 +574,7 @@ class CFDLauncher:
         ttk.Entry(params, textvariable=self.visc_var, width=10).grid(
             row=2, column=1, padx=5)
 
+        # Output directory
         tk.Label(params, text="Output Directory",
                  font=("Segoe UI", 10), bg=DARK_CARD,
                  fg=DARK_FG).grid(row=3, column=0, sticky="w", pady=5)
@@ -536,6 +582,7 @@ class CFDLauncher:
         ttk.Entry(params, textvariable=self.outdir_var, width=25).grid(
             row=3, column=1, padx=5, columnspan=2)
 
+        # Navigation
         nav = tk.Frame(tab, bg=DARK_BG)
         nav.grid(row=1, column=0, columnspan=2, sticky="e", padx=10, pady=10)
         ttk.Button(nav, text="← Back", style="TButton",
@@ -559,6 +606,7 @@ class CFDLauncher:
                                     font=("Courier", 10), wrap="word")
         self.summary_text.pack(fill="both", expand=True)
 
+        # Progress
         self.progress = ttk.Progressbar(tab, orient="horizontal",
                                         length=0, mode="determinate",
                                         style="Horizontal.TProgressbar")
@@ -581,6 +629,7 @@ class CFDLauncher:
                                   command=self._launch_visualizer)
         self.viz_btn.pack(side="right", padx=5)
 
+    # ── Callbacks ──────────────────────────────────────────────────────
     def _on_obj_type_change(self, *args):
         otype = self.obj_type_var.get()
         is_naca = otype.startswith("NACA")
@@ -651,6 +700,7 @@ class CFDLauncher:
         self.info_text.insert("1.0", "\n".join(info_lines))
 
     def _go_emitter(self):
+        # Save state from form
         self.state["naca_digits"] = self.naca_var.get()
         self.state["aoa"] = self.aoa_var.get()
         self.state["object_type"] = self.obj_type_var.get()
@@ -700,12 +750,14 @@ class CFDLauncher:
         self.state["steps"] = int(self.steps_var.get())
         self.state["save_every"] = int(self.save_var.get())
         self.state["solver"] = self.solver_var.get()
+        self.state["engine"] = self.engine_var.get()
         self.state["outdir"] = self.outdir_var.get()
         if self.visc_var.get().strip():
             self.state["viscosity"] = float(self.visc_var.get())
         else:
             self.state["viscosity"] = None
 
+        # Build summary
         summary = json.dumps(self.state, indent=2)
         self.summary_text.delete("1.0", tk.END)
         self.summary_text.insert("1.0", summary)
@@ -714,6 +766,7 @@ class CFDLauncher:
         self.progress["value"] = 0
         self.progress["maximum"] = self.state["steps"]
 
+        # Run in thread
         thread = threading.Thread(target=self._sim_thread, daemon=True)
         thread.start()
 
@@ -722,6 +775,7 @@ class CFDLauncher:
         cmd = [
             sys.executable, "simulate_cfd.py",
             "--mode", s["mode"],
+            "--engine", s.get("engine", "opengl"),
             "--steps", str(s["steps"]),
             "--save-every", str(s["save_every"]),
             "--out-dir", s.get("outdir", "/home/aaditya/Downloads/tmp"),
@@ -761,12 +815,15 @@ class CFDLauncher:
                "CFD_DATA_DIR": s.get("outdir", "/home/aaditya/Downloads/tmp"),
                "CFD_LIVE": "1"} if os.path.exists("/usr/bin/nvidia-smi") else None
 
-        viz_cmd = [sys.executable, "visualize_cfd.py"]
-        viz_proc = subprocess.Popen(
-            viz_cmd,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-            env=env,
-        )
+        # Launch visualizer in parallel (unless Vulkan — no Vulkan viz yet)
+        viz_proc = None
+        if s.get("engine", "opengl") == "opengl":
+            viz_cmd = [sys.executable, "visualize_cfd.py"]
+            viz_proc = subprocess.Popen(
+                viz_cmd,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                env=env,
+            )
 
         try:
             proc = subprocess.Popen(
@@ -798,7 +855,8 @@ class CFDLauncher:
             self.root.after(0, lambda: self._append_log(f"Error: {e}"))
             self.root.after(0, self._sim_done)
         finally:
-            viz_proc.terminate()
+            if viz_proc is not None:
+                viz_proc.terminate()
 
     def _append_log(self, text):
         self.summary_text.insert(tk.END, f"\n{text}")
