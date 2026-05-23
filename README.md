@@ -141,9 +141,8 @@ These are primarily convenience defaults for development and can be overridden v
 
 FeatherCFD Validation — All tests passing on RTX 3050, 192³ grid.
 
-==============================================================================
+
 OpenGL Solver — Incompressible NS
-==============================================================================
 
   [1] validate_cfd.py
       Checks: divergence < 0.1, no-slip walls = 0 (exact), inflow BC = 1.0,
@@ -196,9 +195,8 @@ OpenGL Solver — Incompressible NS
       Steps: 300 per mode
       Result: All modes produce finite lift.
 
-==============================================================================
 OpenGL Solver — Compressible Euler
-==============================================================================
+
 
   [10] validate_sod.py
        Sod shock tube problem.
@@ -229,9 +227,9 @@ OpenGL Solver — Compressible Euler
        Mach > inflow M upstream of obstacles, flow converges.
        No NaN/inf in any case.
 
-==============================================================================
+
 Vulkan Compute Backend
-==============================================================================
+
 
   [13] test_diag_forces.py
        Vulkan upload/download axis mapping verification.
@@ -249,9 +247,9 @@ Vulkan Compute Backend
        Result: Viewer initializes, swapchain created, textures uploaded,
                render loop runs at target framerate.
 
-==============================================================================
+
 Validation Runner
-==============================================================================
+
 
   [16] run_validation.py
        Orchestrator: Sod shock tube (200 steps) +
