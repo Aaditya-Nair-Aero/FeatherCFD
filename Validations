@@ -1,0 +1,121 @@
+FeatherCFD Validation — All tests passing on RTX 3050, 192³ grid.
+
+==============================================================================
+OpenGL Solver — Incompressible NS
+==============================================================================
+
+  [1] validate_cfd.py
+      Checks: divergence < 0.1, no-slip walls = 0 (exact), inflow BC = 1.0,
+              no NaN/inf.
+      Steps: 5
+      Result: max div = 0.003590, wall velocity = 0.0 (exact)
+
+  [2] validate_naca_sweep.py
+      NACA 0012 sweep at Re = 1000–5000, AoA = 0°–10°.
+      Reference: Sheldahl & Klimas (1981) SAND80-2114;
+                 Jacobs & Sherman (1937) NACA Report 586.
+      Steps: 400 per case
+      Result: Cl and Cd stable across all Re/AoA.
+      Lift-to-drag ratios within expected range for low-Re NACA 0012.
+
+  [3] test_naca.py
+      Long-duration NACA 0012 run.
+      Steps: 500
+      Result: No blowup, forces remain finite throughout.
+
+  [4] test_naca_compare.py
+      RBGS iterations vs V-cycle pressure solve.
+      Reference: Internal benchmark.
+      Steps: 300 per mode
+      Result: Both solvers converge to comparable Cl.
+
+  [5] test_naca_sgs.py
+      Smagorinsky SGS model.
+      Reference: Smagorinsky (1963); Lilly (1962).
+      Steps: 300
+      Result: Eddy viscosity active, solution remains stable.
+
+  [6] test_naca_smoke.py
+      Quick smoke test with GPU mask fix.
+      Steps: 5
+      Result: GPU obstacle mask cell count matches expectation.
+
+  [7] test_fft.py
+      FFT Poisson preconditioner.
+      Steps: 30
+      Result: Pressure solve converges, no divergence spikes.
+
+  [8] test_dct_obstacle.py
+      DST Poisson solve with obstacle.
+      Steps: 50
+      Result: Pressure field smooth, obstacle boundary conditions met.
+
+  [9] test_clamp_modes.py
+      Four advection clamp modes (0=std, 1=none, 2=SDF-aware, 3=local).
+      Steps: 300 per mode
+      Result: All modes produce finite lift.
+
+==============================================================================
+OpenGL Solver — Compressible Euler
+==============================================================================
+
+  [10] validate_sod.py
+       Sod shock tube problem.
+       Reference: Sod (1978) "A numerical study of gas dynamics";
+                  Toro (1999) "Riemann Solvers and Numerical Methods".
+       Initial conditions — Left: ρ=1.0, u=0.0, p=1.0;
+                            Right: ρ=0.125, u=0.0, p=0.1.
+       Comparison: exact Riemann solution (iterative solver, 50 iterations).
+       Steps: variable (plots centerline at t=0.2).
+       Result: ρ, u, p profiles match exact solution.
+       Normalized error < 12%.
+
+  [11] validate_wedge.py
+       Compression corner oblique shock, θ = 10°.
+       Reference: Anderson (2001) "Fundamentals of Aerodynamics";
+                  NACA Report 1135 (θ-β-M relation).
+       Mach sweep: 1.5, 2.0, 2.5, 3.0.
+       Steps: 1000 per case.
+       Result: Numerical shock angle matches θ-β-M theory.
+       β error < 1° across all Mach numbers.
+
+  [12] validate_compressible.py
+       Compressible Euler obstacle sweep.
+       Obstacles: cylinder, sphere, wedge.
+       Mach: 0.5, 1.5, 2.0, 3.0.
+       Steps: 200 per case.
+       Result: Bow shocks form at all supersonic Mach numbers.
+       Mach > inflow M upstream of obstacles, flow converges.
+       No NaN/inf in any case.
+
+==============================================================================
+Vulkan Compute Backend
+==============================================================================
+
+  [13] test_diag_forces.py
+       Vulkan upload/download axis mapping verification.
+       Result: Byte data correctly transposed between CPU and GPU layout.
+
+  [14] test_validate.py
+       Full Vulkan CFD pipeline, NACA 0012 at AoA 5°.
+       Steps: 100
+       Result: Simulation runs without error.
+       Forces remain finite, divergence bounded.
+
+  [15] visualize_vk.py (standalone test)
+       Vulkan raymarch viewer init + swapchain + frame upload.
+       Frames: 150 (192³ RGBA16F)
+       Result: Viewer initializes, swapchain created, textures uploaded,
+               render loop runs at target framerate.
+
+==============================================================================
+Validation Runner
+==============================================================================
+
+  [16] run_validation.py
+       Orchestrator: Sod shock tube (200 steps) +
+                     compressible obstacles at M=0.5/1.5/2.0/3.0 (100 steps each) +
+                     NACA 0012 incompressible at Re=5000, AoA=5° (100 steps).
+       Reference: Combined references from [10], [11], [12], [2] above.
+       Result: All cases pass.
+       Report generated with per-case status.
